@@ -1,0 +1,16 @@
+{
+	"permissions": {
+		"allow": [
+			"Bash(npm run type-check:*)",
+			"Bash(npm run dev:*)",
+			"Bash(npm run lint)",
+			"Bash(npm run lint:*)",
+			"Bash(git add:*)",
+			"Bash(git commit:*)",
+			"mcp__context7",
+      "mcp__serena"
+		],
+		"deny": [],
+		"ask": []
+	}
+}
