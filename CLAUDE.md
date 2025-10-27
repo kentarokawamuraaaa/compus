@@ -107,6 +107,7 @@ Validation: `isValidParsed()` ensures headers include key financial terms (PER, 
 - **TypeScript strict mode**: All code must satisfy strict type checking
 - **Company data file**: [app/tosyo.json](app/tosyo.json) is a large (1.6MB) static dataset loaded at runtime
 - **Debounced search**: 200ms debounce on search input using `lodash.debounce`
+- **React Hooks**: Do NOT use `useCallback` or `useMemo` - use regular functions and variables instead
 
 ## Common Patterns
 
