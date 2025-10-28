@@ -253,7 +253,7 @@ export function TimeSeriesChart({ companies }: TimeSeriesChartProps) {
 	}
 
 	return (
-		<Card>
+		<Card className="py-4">
 			<CardHeader>
 				<CardTitle className="flex items-center justify-between flex-wrap gap-4">
 					<span>時系列グラフ（ダミーデータ）</span>
@@ -285,9 +285,19 @@ export function TimeSeriesChart({ companies }: TimeSeriesChartProps) {
 					</div>
 				</CardTitle>
 			</CardHeader>
-			<CardContent>
-				<ChartContainer config={chartConfig} className="min-h-[300px] w-full">
-					<LineChart accessibilityLayer data={chartData}>
+			<CardContent className="px-2 sm:p-6">
+				<ChartContainer
+					config={chartConfig}
+					className="aspect-auto h-[250px] w-full"
+				>
+					<LineChart
+						accessibilityLayer
+						data={chartData}
+						margin={{
+							left: 12,
+							right: 12,
+						}}
+					>
 						<CartesianGrid strokeDasharray="3 3" vertical={false} />
 						<XAxis
 							dataKey="month"

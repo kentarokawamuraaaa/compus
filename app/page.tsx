@@ -13,7 +13,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Spinner } from "@/components/ui/spinner";
 import { TimeSeriesChart } from "@/components/TimeSeriesChart";
-import { Settings, Plus, BarChart3, FileText } from "lucide-react";
+import {
+	Accordion,
+	AccordionContent,
+	AccordionItem,
+	AccordionTrigger,
+} from "@/components/ui/accordion";
+import { Settings, Plus, BarChart3, FileText, ChevronDown, ChevronUp } from "lucide-react";
 import {
 	Dialog,
 	DialogContent,
@@ -45,6 +51,19 @@ export default function Home() {
 
 	// Sub-tab state for chart vs details view
 	const [viewMode, setViewMode] = useState<"chart" | "details">("chart");
+
+	// Accordion state for expanded companies
+	const [expandedCompanies, setExpandedCompanies] = useState<string[]>([]);
+
+	// Helper to expand/collapse all companies
+	const expandAll = () => {
+		if (!tabCompanies) return;
+		setExpandedCompanies(tabCompanies.map((c) => c.companyCode));
+	};
+
+	const collapseAll = () => {
+		setExpandedCompanies([]);
+	};
 
 	// Convex queries and mutations
 	const tabs = useQuery(api.tabs.listTabs);
@@ -170,6 +189,8 @@ export default function Home() {
 			companyCode: comp.code,
 			companyName: comp.name,
 		});
+		// 新規追加した企業を展開状態にする
+		setExpandedCompanies((prev) => [...prev, comp.code]);
 	};
 
 	// 企業削除
@@ -446,32 +467,89 @@ export default function Home() {
 								<TabsContent value="details" className="mt-6 space-y-6">
 									{tabCompanies && tabCompanies.length > 0 ? (
 										<>
-											{/* 各企業のカード */}
-											{tabCompanies.map((c) => {
-												const parsed = c.parsed ? JSON.parse(c.parsed) : null;
-												const summary = c.summary
-													? JSON.parse(c.summary)
-													: null;
-												const isParsing = parsingCompany === c.companyCode;
+											{/* 展開/折りたたみボタン */}
+											<div className="flex gap-2 justify-end">
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={expandAll}
+												>
+													<ChevronDown className="h-4 w-4 mr-1" />
+													すべて展開
+												</Button>
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={collapseAll}
+												>
+													<ChevronUp className="h-4 w-4 mr-1" />
+													すべて折りたたむ
+												</Button>
+											</div>
 
-												return (
-													<Card key={c.companyCode}>
-														<CardContent className="flex flex-row gap-3">
-															<div className="flex flex-col gap-3 min-w-0 flex-[1_1_320px]">
-																<div className="flex items-center justify-between">
-																	<CardTitle>
-																		{c.companyName} ({c.companyCode})
-																	</CardTitle>
-																	<Button
-																		variant="ghost"
-																		className="h-8 px-2 text-red-600"
-																		onClick={() =>
-																			handleRemoveCompany(c.companyCode)
-																		}
-																	>
-																		削除
-																	</Button>
-																</div>
+											{/* 各企業のアコーディオン */}
+											<Accordion
+												type="multiple"
+												value={expandedCompanies}
+												onValueChange={setExpandedCompanies}
+											>
+												{tabCompanies.map((c) => {
+													const parsed = c.parsed ? JSON.parse(c.parsed) : null;
+													const summary = c.summary
+														? JSON.parse(c.summary)
+														: null;
+													const isParsing = parsingCompany === c.companyCode;
+
+													return (
+														<AccordionItem
+															key={c.companyCode}
+															value={c.companyCode}
+														>
+															<Card>
+																<AccordionTrigger className="px-6 py-4 hover:no-underline">
+																	<div className="flex items-center justify-between w-full pr-4">
+																		<div className="flex items-center gap-4">
+																			<CardTitle className="text-lg">
+																				{c.companyName} ({c.companyCode})
+																			</CardTitle>
+																		</div>
+																		{summary && (
+																			<div className="flex gap-6 text-sm text-muted-foreground">
+																				{Object.entries(summary)
+																					.filter(([key]) => {
+																						const hiddenColumns = [
+																							"配当利予",
+																							"ROE",
+																							"自資本比",
+																							"特徴語",
+																						];
+																						return !hiddenColumns.includes(key);
+																					})
+																					.slice(0, 5)
+																					.map(([key, value]) => (
+																						<span key={key} className="whitespace-nowrap">
+																							<span className="font-medium">{key}:</span>{" "}
+																							{String(value)}
+																						</span>
+																					))}
+																			</div>
+																		)}
+																	</div>
+																</AccordionTrigger>
+																<AccordionContent>
+																	<CardContent className="flex flex-row gap-3 pt-0">
+																		<div className="flex flex-col gap-3 min-w-0 flex-[1_1_320px]">
+																			<div className="flex items-center gap-2 justify-end">
+																				<Button
+																					variant="ghost"
+																					className="h-8 px-2 text-red-600"
+																					onClick={() =>
+																						handleRemoveCompany(c.companyCode)
+																					}
+																				>
+																					削除
+																				</Button>
+																			</div>
 																<div className="flex items-center gap-2">
 																	<Button
 																		type="button"
@@ -836,14 +914,17 @@ export default function Home() {
 																						</tbody>
 																					</table>
 																				</ScrollArea>
-																			</div>
-																		);
-																	})()}
-															</div>
-														</CardContent>
-													</Card>
-												);
-											})}
+																					</div>
+																				);
+																			})()}
+																		</div>
+																	</CardContent>
+																</AccordionContent>
+															</Card>
+														</AccordionItem>
+													);
+												})}
+											</Accordion>
 										</>
 									) : (
 										<Card>
