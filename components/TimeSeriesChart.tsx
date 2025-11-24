@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
 	ChartContainer,
 	ChartTooltip,
@@ -15,248 +16,235 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 type CompanyRow = { code: string; name: string };
 
+interface HistoricalDataPoint {
+	date: string;
+	close: number;
+	per?: number;
+	psr?: number;
+}
+
+interface CaseData {
+	caseId: string;
+	caseName: string;
+	companyCodes: string[];
+}
+
 interface TimeSeriesChartProps {
 	companies: CompanyRow[];
+	historicalData?: Record<string, HistoricalDataPoint[]>;
+	period?: "1mo" | "3mo" | "6mo" | "1y";
+	onPeriodChange?: (period: "1mo" | "3mo" | "6mo" | "1y") => void;
+	selectedCases?: CaseData[];
 }
 
-// 静的なダミーデータ（メトリクスごと）
-const DUMMY_METRICS_DATA = {
-	PSR: [
-		{ month: "5月" },
-		{ month: "6月" },
-		{ month: "7月" },
-		{ month: "8月" },
-		{ month: "9月" },
-		{ month: "10月" },
-		{ month: "11月" },
-		{ month: "12月" },
-		{ month: "1月" },
-		{ month: "2月" },
-		{ month: "3月" },
-		{ month: "4月" },
-	] as Array<Record<string, number | string>>,
-	売上: [
-		{ month: "5月" },
-		{ month: "6月" },
-		{ month: "7月" },
-		{ month: "8月" },
-		{ month: "9月" },
-		{ month: "10月" },
-		{ month: "11月" },
-		{ month: "12月" },
-		{ month: "1月" },
-		{ month: "2月" },
-		{ month: "3月" },
-		{ month: "4月" },
-	] as Array<Record<string, number | string>>,
-	時価総額: [
-		{ month: "5月" },
-		{ month: "6月" },
-		{ month: "7月" },
-		{ month: "8月" },
-		{ month: "9月" },
-		{ month: "10月" },
-		{ month: "11月" },
-		{ month: "12月" },
-		{ month: "1月" },
-		{ month: "2月" },
-		{ month: "3月" },
-		{ month: "4月" },
-	] as Array<Record<string, number | string>>,
-	PER: [
-		{ month: "5月" },
-		{ month: "6月" },
-		{ month: "7月" },
-		{ month: "8月" },
-		{ month: "9月" },
-		{ month: "10月" },
-		{ month: "11月" },
-		{ month: "12月" },
-		{ month: "1月" },
-		{ month: "2月" },
-		{ month: "3月" },
-		{ month: "4月" },
-	] as Array<Record<string, number | string>>,
-	ROE: [
-		{ month: "5月" },
-		{ month: "6月" },
-		{ month: "7月" },
-		{ month: "8月" },
-		{ month: "9月" },
-		{ month: "10月" },
-		{ month: "11月" },
-		{ month: "12月" },
-		{ month: "1月" },
-		{ month: "2月" },
-		{ month: "3月" },
-		{ month: "4月" },
-	] as Array<Record<string, number | string>>,
-};
-
-// 企業コードごとのベース値（ダミーデータ生成用）
-const COMPANY_BASE_VALUES: Record<
-	string,
-	{ psr: number; sales: number; marketCap: number; per: number; roe: number }
-> = {
-	SHIFT: { psr: 8.5, sales: 1200, marketCap: 10000, per: 25, roe: 12 },
-	"7203": { psr: 0.6, sales: 30000, marketCap: 35000, per: 8, roe: 9 },
-	"6758": { psr: 1.2, sales: 8500, marketCap: 10000, per: 15, roe: 7 },
-	"9984": { psr: 2.5, sales: 6000, marketCap: 15000, per: 18, roe: 11 },
-	"4063": { psr: 4.2, sales: 800, marketCap: 3400, per: 22, roe: 15 },
-};
-
-// ダミーデータの変動パターン（月ごとの変化率）
-const MONTHLY_VARIATIONS = [
-	0.95, 0.98, 1.02, 1.05, 1.03, 1.08, 1.12, 1.1, 1.15, 1.18, 1.2, 1.22,
-];
-
-// 企業コードに対してベース値を取得（存在しない場合はハッシュ値から生成）
-function getBaseValues(code: string) {
-	if (COMPANY_BASE_VALUES[code]) {
-		return COMPANY_BASE_VALUES[code];
-	}
-
-	// ハッシュ値を生成
-	let hash = 0;
-	for (let i = 0; i < code.length; i++) {
-		hash = (hash << 5) - hash + code.charCodeAt(i);
-		hash = hash & hash;
-	}
-	const seed = Math.abs(hash) % 1000;
-
-	return {
-		psr: 1 + (seed % 10),
-		sales: 500 + (seed % 500) * 10,
-		marketCap: 2000 + (seed % 1000) * 10,
-		per: 8 + (seed % 20),
-		roe: 5 + (seed % 15),
-	};
+// 日付を表示用にフォーマット
+function formatDate(isoDate: string): string {
+	const date = new Date(isoDate);
+	const month = date.getMonth() + 1;
+	const day = date.getDate();
+	return `${month}/${day}`;
 }
 
-// ダミーデータを初期化
-function initializeDummyData() {
-	// PSRデータ
-	MONTHLY_VARIATIONS.forEach((variation, index) => {
-		for (const code of Object.keys(COMPANY_BASE_VALUES)) {
-			const base = COMPANY_BASE_VALUES[code];
-			DUMMY_METRICS_DATA.PSR[index][code] = Number.parseFloat(
-				(base.psr * variation).toFixed(2),
-			);
-		}
-	});
+export function TimeSeriesChart({
+	companies,
+	historicalData,
+	period: externalPeriod,
+	onPeriodChange,
+	selectedCases = [],
+}: TimeSeriesChartProps) {
+	const [metric, setMetric] = useState<string>("PSR");
+	const [internalPeriod, setInternalPeriod] = useState<number>(6);
+	const [showIndividualLines, setShowIndividualLines] = useState<boolean>(true);
+	const [showAverageLine, setShowAverageLine] = useState<boolean>(true);
+	const [showCaseAverages, setShowCaseAverages] = useState<boolean>(true);
 
-	// 売上データ
-	MONTHLY_VARIATIONS.forEach((variation, index) => {
-		for (const code of Object.keys(COMPANY_BASE_VALUES)) {
-			const base = COMPANY_BASE_VALUES[code];
-			DUMMY_METRICS_DATA.売上[index][code] = Math.round(base.sales * variation);
-		}
-	});
-
-	// 時価総額データ
-	MONTHLY_VARIATIONS.forEach((variation, index) => {
-		for (const code of Object.keys(COMPANY_BASE_VALUES)) {
-			const base = COMPANY_BASE_VALUES[code];
-			DUMMY_METRICS_DATA.時価総額[index][code] = Math.round(
-				base.marketCap * variation,
-			);
-		}
-	});
-
-	// PERデータ
-	MONTHLY_VARIATIONS.forEach((variation, index) => {
-		for (const code of Object.keys(COMPANY_BASE_VALUES)) {
-			const base = COMPANY_BASE_VALUES[code];
-			DUMMY_METRICS_DATA.PER[index][code] = Number.parseFloat(
-				(base.per * variation).toFixed(2),
-			);
-		}
-	});
-
-	// ROEデータ
-	MONTHLY_VARIATIONS.forEach((variation, index) => {
-		for (const code of Object.keys(COMPANY_BASE_VALUES)) {
-			const base = COMPANY_BASE_VALUES[code];
-			DUMMY_METRICS_DATA.ROE[index][code] = Number.parseFloat(
-				(base.roe * variation).toFixed(2),
-			);
-		}
-	});
-}
-
-// 初期化実行
-initializeDummyData();
-
-export function TimeSeriesChart({ companies }: TimeSeriesChartProps) {
-	const [metric, setMetric] = useState<string>("売上");
-	const [period, setPeriod] = useState<number>(6);
-
-	const metrics = ["PSR", "売上", "時価総額", "PER", "ROE"];
+	const metrics = ["PSR", "PER"];
 	const periods = [
-		{ label: "3ヶ月", value: 3 },
-		{ label: "6ヶ月", value: 6 },
-		{ label: "1年", value: 12 },
+		{ label: "3ヶ月", value: 3, apiValue: "3mo" as const },
+		{ label: "6ヶ月", value: 6, apiValue: "6mo" as const },
+		{ label: "1年", value: 12, apiValue: "1y" as const },
 	];
 
-	// 選択されたメトリクスのデータを取得し、期間でフィルタリング
-	const baseData =
-		DUMMY_METRICS_DATA[metric as keyof typeof DUMMY_METRICS_DATA] ||
-		DUMMY_METRICS_DATA.売上;
-	const chartData = baseData.slice(-period).map((dataPoint) => {
-		const newPoint: Record<string, number | string> = {
-			month: dataPoint.month,
-		};
+	const handlePeriodChange = (value: number) => {
+		setInternalPeriod(value);
+		const apiValue = periods.find((p) => p.value === value)?.apiValue;
+		if (apiValue && onPeriodChange) {
+			onPeriodChange(apiValue);
+		}
+	};
 
-		// 現在選択されている企業のデータのみを含める
-		for (const company of companies) {
-			if (dataPoint[company.code] !== undefined) {
-				newPoint[company.code] = dataPoint[company.code];
-			} else {
-				// 存在しない企業コードの場合、動的に生成
-				const base = getBaseValues(company.code);
-				const monthIndex = baseData.indexOf(dataPoint);
-				const variation = MONTHLY_VARIATIONS[monthIndex] || 1;
+	// 選択されたメトリクスのデータを持つ企業のみをフィルタ
+	const companiesWithData = useMemo(() => {
+		console.log("[TimeSeriesChart] Filtering companies for metric:", metric);
+		console.log("[TimeSeriesChart] Total companies:", companies.length);
+		console.log("[TimeSeriesChart] Historical data keys:", Object.keys(historicalData || {}));
 
-				if (metric === "PSR") {
-					newPoint[company.code] = Number.parseFloat(
-						(base.psr * variation).toFixed(2),
-					);
-				} else if (metric === "売上") {
-					newPoint[company.code] = Math.round(base.sales * variation);
-				} else if (metric === "時価総額") {
-					newPoint[company.code] = Math.round(base.marketCap * variation);
-				} else if (metric === "PER") {
-					newPoint[company.code] = Number.parseFloat(
-						(base.per * variation).toFixed(2),
-					);
-				} else if (metric === "ROE") {
-					newPoint[company.code] = Number.parseFloat(
-						(base.roe * variation).toFixed(2),
-					);
-				}
+		const filtered = companies.filter((company) => {
+			const companyData = historicalData?.[company.code];
+			if (!companyData || companyData.length === 0) {
+				console.log(`[TimeSeriesChart] ${company.code}: No data`);
+				return false;
+			}
+
+			// 少なくとも1つのデータポイントで選択されたメトリクスが有効かチェック
+			const hasValidData = companyData.some((point) => {
+				const value = metric === "PSR" ? point.psr : point.per;
+				return value !== undefined && value !== null && !Number.isNaN(value);
+			});
+
+			console.log(`[TimeSeriesChart] ${company.code}: hasValidData=${hasValidData}`);
+			return hasValidData;
+		});
+
+		console.log("[TimeSeriesChart] Filtered companies:", filtered.map(c => c.code));
+		return filtered;
+	}, [companies, historicalData, metric]);
+
+	// 実データからchartDataを生成
+	const chartData = useMemo(() => {
+		console.log("[TimeSeriesChart] Generating chartData");
+		console.log("[TimeSeriesChart] companiesWithData:", companiesWithData.map(c => c.code));
+		console.log("[TimeSeriesChart] selectedCases:", selectedCases.length);
+
+		if (!historicalData || Object.keys(historicalData).length === 0) {
+			console.log("[TimeSeriesChart] No historical data");
+			return [];
+		}
+
+		// 全企業の日付の和集合を取得
+		const allDates = new Set<string>();
+		for (const points of Object.values(historicalData)) {
+			for (const point of points) {
+				allDates.add(point.date);
 			}
 		}
 
-		return newPoint;
-	});
+		// 日付順にソート
+		const sortedDates = Array.from(allDates).sort();
+		console.log("[TimeSeriesChart] Total dates:", sortedDates.length);
+
+		// 各日付のデータポイントを作成
+		const data = sortedDates.map((date) => {
+			const point: Record<string, number | string> = {
+				date: formatDate(date),
+			};
+
+			// データを持つ企業のみのメトリクス値を追加
+			for (const company of companiesWithData) {
+				const companyData = historicalData[company.code];
+				const dataPoint = companyData?.find((p) => p.date === date);
+
+				if (dataPoint) {
+					// 選択中のメトリクスに応じた値を設定
+					const value = metric === "PSR" ? dataPoint.psr : dataPoint.per;
+					if (value !== undefined && value !== null && !Number.isNaN(value)) {
+						point[company.code] = value;
+					}
+				}
+			}
+
+			// 全体の平均値を計算（有効な値を持つ企業のみ）
+			const values = companiesWithData
+				.map((c) => point[c.code])
+				.filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
+
+			if (values.length > 0) {
+				const average = values.reduce((sum, v) => sum + v, 0) / values.length;
+				point.平均 = Number(average.toFixed(2));
+			}
+
+			// 各ケースの平均値を計算
+			for (const caseData of selectedCases) {
+				const caseKey = `ケース_${caseData.caseName}`;
+				// このケースに含まれる企業で、historicalDataとcompaniesWithDataの両方に存在する企業のみを対象
+				const caseCompanies = caseData.companyCodes.filter(
+					(code) =>
+						historicalData[code] &&
+						companiesWithData.some((c) => c.code === code),
+				);
+
+				const caseValues = caseCompanies
+					.map((code) => {
+						const companyData = historicalData[code];
+						const dataPoint = companyData?.find((p) => p.date === date);
+						if (dataPoint) {
+							const value = metric === "PSR" ? dataPoint.psr : dataPoint.per;
+							return value;
+						}
+						return undefined;
+					})
+					.filter(
+						(v): v is number =>
+							v !== undefined && v !== null && !Number.isNaN(v),
+					);
+
+				if (caseValues.length > 0) {
+					const caseAverage =
+						caseValues.reduce((sum, v) => sum + v, 0) / caseValues.length;
+					point[caseKey] = Number(caseAverage.toFixed(2));
+				}
+			}
+
+			return point;
+		});
+
+		console.log("[TimeSeriesChart] Sample chartData (first 3 points):", data.slice(0, 3));
+		console.log("[TimeSeriesChart] Chart has 平均 values:", data.filter(p => p.平均 !== undefined).length);
+		return data;
+	}, [historicalData, companiesWithData, metric, selectedCases]);
 
 	const chartConfig: ChartConfig = {};
-	companies.forEach((company, index) => {
+	companiesWithData.forEach((company, index) => {
 		chartConfig[company.code] = {
 			label: company.name,
 			color: `var(--chart-${(index % 5) + 1})`,
 		};
 	});
 
+	// 平均値の設定を追加
+	chartConfig.平均 = {
+		label: "平均",
+		color: "#ef4444",
+	};
+
+	// 各ケースの平均値の設定を追加
+	const caseColors = ["#3b82f6", "#10b981", "#f59e0b"];
+	selectedCases.forEach((caseData, index) => {
+		const caseKey = `ケース_${caseData.caseName}`;
+		chartConfig[caseKey] = {
+			label: `${caseData.caseName}平均`,
+			color: caseColors[index % caseColors.length],
+		};
+	});
+
+	console.log("[TimeSeriesChart] chartConfig keys:", Object.keys(chartConfig));
+	console.log("[TimeSeriesChart] showAverageLine:", showAverageLine);
+
 	if (companies.length === 0) {
 		return null;
+	}
+
+	// データが無い場合は表示しない
+	if (chartData.length === 0) {
+		return (
+			<Card className="py-4">
+				<CardHeader>
+					<CardTitle>時系列グラフ</CardTitle>
+				</CardHeader>
+				<CardContent className="px-2 sm:p-6">
+					<div className="text-center text-muted-foreground py-8">
+						データを読み込み中...
+					</div>
+				</CardContent>
+			</Card>
+		);
 	}
 
 	return (
 		<Card className="py-4">
 			<CardHeader>
 				<CardTitle className="flex items-center justify-between flex-wrap gap-4">
-					<span>時系列グラフ（ダミーデータ）</span>
+					<span>時系列グラフ</span>
 					<div className="flex gap-2 flex-wrap">
 						<div className="flex gap-1">
 							{metrics.map((m) => (
@@ -274,9 +262,9 @@ export function TimeSeriesChart({ companies }: TimeSeriesChartProps) {
 							{periods.map((p) => (
 								<Button
 									key={p.value}
-									variant={period === p.value ? "default" : "outline"}
+									variant={internalPeriod === p.value ? "default" : "outline"}
 									size="sm"
-									onClick={() => setPeriod(p.value)}
+									onClick={() => handlePeriodChange(p.value)}
 								>
 									{p.label}
 								</Button>
@@ -284,6 +272,43 @@ export function TimeSeriesChart({ companies }: TimeSeriesChartProps) {
 						</div>
 					</div>
 				</CardTitle>
+				<div className="flex gap-4 items-center pt-4 flex-wrap">
+					<div className="flex items-center gap-2">
+						<Switch
+							id="show-individual"
+							checked={showIndividualLines}
+							onCheckedChange={setShowIndividualLines}
+						/>
+						<label htmlFor="show-individual" className="text-sm cursor-pointer">
+							個別企業
+						</label>
+					</div>
+					<div className="flex items-center gap-2">
+						<Switch
+							id="show-average"
+							checked={showAverageLine}
+							onCheckedChange={setShowAverageLine}
+						/>
+						<label htmlFor="show-average" className="text-sm cursor-pointer">
+							全体平均
+						</label>
+					</div>
+					{selectedCases.length > 0 && (
+						<div className="flex items-center gap-2">
+							<Switch
+								id="show-case-averages"
+								checked={showCaseAverages}
+								onCheckedChange={setShowCaseAverages}
+							/>
+							<label
+								htmlFor="show-case-averages"
+								className="text-sm cursor-pointer"
+							>
+								ケース平均
+							</label>
+						</div>
+					)}
+				</div>
 			</CardHeader>
 			<CardContent className="px-2 sm:p-6">
 				<ChartContainer
@@ -300,7 +325,7 @@ export function TimeSeriesChart({ companies }: TimeSeriesChartProps) {
 					>
 						<CartesianGrid strokeDasharray="3 3" vertical={false} />
 						<XAxis
-							dataKey="month"
+							dataKey="date"
 							tickLine={false}
 							axisLine={false}
 							tickMargin={8}
@@ -309,25 +334,45 @@ export function TimeSeriesChart({ companies }: TimeSeriesChartProps) {
 							tickLine={false}
 							axisLine={false}
 							tickMargin={8}
-							tickFormatter={(value) => {
-								if (metric === "売上" || metric === "時価総額") {
-									return `${value}億`;
-								}
-								return value.toString();
-							}}
 						/>
 						<ChartTooltip content={<ChartTooltipContent />} />
 						<ChartLegend content={<ChartLegendContent />} />
-						{companies.map((company) => (
+						{showIndividualLines &&
+							companiesWithData.map((company) => (
+								<Line
+									key={company.code}
+									type="monotone"
+									dataKey={company.code}
+									stroke={`var(--color-${company.code})`}
+									strokeWidth={2}
+									dot={false}
+								/>
+							))}
+						{showAverageLine && (
 							<Line
-								key={company.code}
+								key="平均"
 								type="monotone"
-								dataKey={company.code}
-								stroke={`var(--color-${company.code})`}
-								strokeWidth={2}
+								dataKey="平均"
+								stroke="var(--color-平均)"
+								strokeWidth={3}
 								dot={false}
+								strokeDasharray="5 5"
 							/>
-						))}
+						)}
+						{showCaseAverages &&
+							selectedCases.map((caseData) => {
+								const caseKey = `ケース_${caseData.caseName}`;
+								return (
+									<Line
+										key={caseKey}
+										type="monotone"
+										dataKey={caseKey}
+										stroke={`var(--color-${caseKey})`}
+										strokeWidth={3}
+										dot={false}
+									/>
+								);
+							})}
 					</LineChart>
 				</ChartContainer>
 			</CardContent>

@@ -1,25 +1,51 @@
 "use client";
 import debounce from "lodash.debounce";
 import { useEffect, useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+	Card,
+	CardContent,
+	CardHeader,
+	CardTitle,
+	CardAction,
+	CardDescription,
+} from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Spinner } from "@/components/ui/spinner";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TimeSeriesChart } from "@/components/TimeSeriesChart";
+import { CaseComparisonTable } from "@/components/CaseComparisonTable";
+import { TimeSeriesTable } from "@/components/TimeSeriesTable";
 import {
 	Accordion,
 	AccordionContent,
 	AccordionItem,
 	AccordionTrigger,
 } from "@/components/ui/accordion";
-import { Settings, Plus, BarChart3, FileText, ChevronDown, ChevronUp } from "lucide-react";
+import {
+	Settings,
+	Plus,
+	BarChart3,
+	FileText,
+	ChevronDown,
+	ChevronUp,
+	Save,
+	Trash2,
+	Copy,
+} from "lucide-react";
+import {
+	extractMetrics,
+	calculateAverages,
+	type CompanyMetrics,
+	type AverageMetrics,
+} from "@/lib/metrics";
 import {
 	Dialog,
 	DialogContent,
@@ -49,8 +75,36 @@ export default function Home() {
 	// Dialog state for company search/add
 	const [companyDialogOpen, setCompanyDialogOpen] = useState(false);
 
-	// Sub-tab state for chart vs details view
-	const [viewMode, setViewMode] = useState<"chart" | "details">("chart");
+	// Case management state
+	const [activeCaseId, setActiveCaseId] = useState<Id<"cases"> | null>(null);
+	const [selectedCaseIds, setSelectedCaseIds] = useState<Set<Id<"cases">>>(
+		new Set(),
+	);
+	const [caseDialogOpen, setCaseDialogOpen] = useState(false);
+	const [newCaseName, setNewCaseName] = useState("");
+
+	// Sub-tab state for chart vs details view (now includes table and timeseries)
+	const [viewMode, setViewMode] = useState<
+		"chart" | "table" | "timeseries" | "details"
+	>("chart");
+
+	// Historical data state
+	const [chartPeriod, setChartPeriod] = useState<"1mo" | "3mo" | "6mo" | "1y">(
+		"6mo",
+	);
+	const [historicalData, setHistoricalData] = useState<
+		Record<
+			string,
+			Array<{
+				date: string;
+				close: number;
+				per?: number;
+				psr?: number;
+				roe?: number;
+			}>
+		>
+	>({});
+	const [loadingHistorical, setLoadingHistorical] = useState(false);
 
 	// Accordion state for expanded companies
 	const [expandedCompanies, setExpandedCompanies] = useState<string[]>([]);
@@ -83,6 +137,21 @@ export default function Home() {
 	);
 	const updateCompanyData = useMutation(api.tabCompanies.updateCompanyData);
 
+	// Case queries and mutations
+	const cases = useQuery(
+		api.cases.list,
+		activeTabId ? { tabId: activeTabId } : "skip",
+	);
+	const createCase = useMutation(api.cases.create);
+	const deleteCase = useMutation(api.cases.deleteCase);
+	const renameCase = useMutation(api.cases.rename);
+	const duplicateCase = useMutation(api.cases.duplicate);
+	const setActiveCase = useMutation(api.cases.setActiveCase);
+	const updateCompanyInCase = useMutation(api.cases.updateCompanyInCase);
+
+	// Yahoo Finance action
+	const fetchYahooData = useAction(api.yahooFinance.fetchHistoricalData);
+
 	const debouncedSetQuery = debounce((v: string) => setQueryText(v), 200);
 
 	// 最初のタブを自動選択
@@ -91,6 +160,20 @@ export default function Home() {
 			setActiveTabId(tabs[0]._id);
 		}
 	}, [tabs, activeTabId]);
+
+	// 最初のケースを自動選択（タブが切り替わった時も）
+	useEffect(() => {
+		if (cases && cases.length > 0 && !activeCaseId) {
+			setActiveCaseId(cases[0]._id);
+		}
+	}, [cases, activeCaseId]);
+
+	// タブが変更されたら全企業のデータを自動取得
+	useEffect(() => {
+		if (activeTabId && tabCompanies) {
+			fetchHistoricalData(chartPeriod);
+		}
+	}, [activeTabId, chartPeriod, tabCompanies]);
 
 	// 企業検索
 	useEffect(() => {
@@ -178,7 +261,7 @@ export default function Home() {
 		}
 	};
 
-	// 企業追加（現在のアクティブタブに）
+	// 企業追加（現在のアクティブタブとアクティブケースに）
 	const handleAddCompany = async (comp: CompanyRow) => {
 		if (!activeTabId) {
 			alert("まずタブを選択してください");
@@ -189,6 +272,16 @@ export default function Home() {
 			companyCode: comp.code,
 			companyName: comp.name,
 		});
+
+		// アクティブなケースにも追加
+		if (activeCaseId) {
+			await updateCompanyInCase({
+				caseId: activeCaseId,
+				companyCode: comp.code,
+				shouldInclude: true,
+			});
+		}
+
 		// 新規追加した企業を展開状態にする
 		setExpandedCompanies((prev) => [...prev, comp.code]);
 	};
@@ -199,10 +292,17 @@ export default function Home() {
 		await removeCompanyFromTab({ tabId: activeTabId, companyCode });
 	};
 
-	// 企業ON/OFF切り替え
-	const handleToggleCompany = async (companyCode: string) => {
-		if (!activeTabId) return;
-		await toggleCompanyEnabled({ tabId: activeTabId, companyCode });
+	// 企業ON/OFF切り替え（アクティブなケースを更新）
+	const handleToggleCompany = async (
+		companyCode: string,
+		newEnabled: boolean,
+	) => {
+		if (!activeCaseId) return;
+		await updateCompanyInCase({
+			caseId: activeCaseId,
+			companyCode,
+			shouldInclude: newEnabled,
+		});
 	};
 
 	// 企業がタブ内に存在するかチェック
@@ -331,6 +431,211 @@ export default function Home() {
 				name: c.companyName,
 			})) ?? [];
 
+	// 平均値計算用のデータ準備
+	const companyMetrics: CompanyMetrics[] =
+		tabCompanies
+			?.filter((c) => c.enabled && c.parsed)
+			.map((c) => {
+				try {
+					const parsed = JSON.parse(c.parsed);
+					return extractMetrics(parsed, c.companyCode, c.companyName);
+				} catch {
+					return {
+						code: c.companyCode,
+						name: c.companyName,
+						metrics: {},
+					};
+				}
+			}) ?? [];
+
+	const averageMetrics = calculateAverages(companyMetrics);
+
+	// 選択中のケースの平均値データを準備
+	const selectedCasesData =
+		cases && selectedCaseIds.size > 0
+			? Array.from(selectedCaseIds)
+					.map((caseId) => {
+						const caseItem = cases.find((c) => c._id === caseId);
+						if (!caseItem) return null;
+
+						console.log("[page.tsx] Processing case:", caseItem.name);
+						console.log("[page.tsx] Case companySet:", caseItem.companySet);
+
+						// このケースの企業のメトリクスを抽出
+						const caseCompanyMetrics = tabCompanies
+							?.filter(
+								(c) =>
+									caseItem.companySet.includes(c.companyCode) &&
+									c.enabled &&
+									c.parsed,
+							)
+							.map((c) => {
+								try {
+									const parsed = JSON.parse(c.parsed);
+									const metrics = extractMetrics(parsed, c.companyCode, c.companyName);
+									console.log(`[page.tsx] Metrics for ${c.companyName}:`, metrics);
+									return metrics;
+								} catch {
+									return {
+										code: c.companyCode,
+										name: c.companyName,
+										metrics: {},
+									};
+								}
+							});
+
+						console.log("[page.tsx] caseCompanyMetrics:", caseCompanyMetrics);
+
+						const caseAverages = calculateAverages(caseCompanyMetrics ?? []);
+						console.log("[page.tsx] caseAverages:", caseAverages);
+
+						return {
+							caseId,
+							caseName: caseItem.name,
+							averages: caseAverages,
+							companyCount: caseItem.companySet.length,
+						};
+					})
+					.filter((c): c is NonNullable<typeof c> => c !== null)
+			: [];
+
+	console.log("[page.tsx] selectedCasesData:", selectedCasesData);
+
+	// ケース保存ハンドラー
+	const handleSaveCase = async () => {
+		if (!activeTabId || !newCaseName.trim()) {
+			alert("ケース名を入力してください");
+			return;
+		}
+		const enabledCodes =
+			tabCompanies?.filter((c) => c.enabled).map((c) => c.companyCode) ?? [];
+		if (enabledCodes.length === 0) {
+			alert("有効な企業を選択してください");
+			return;
+		}
+		await createCase({
+			tabId: activeTabId,
+			name: newCaseName,
+			companySet: enabledCodes,
+		});
+		setNewCaseName("");
+		setCaseDialogOpen(false);
+	};
+
+	// ケース選択ハンドラー（複数選択対応）
+	const handleSelectCase = async (caseId: Id<"cases">) => {
+		setActiveCaseId(caseId);
+		await setActiveCase({ caseId });
+	};
+
+	// ケース比較用の選択トグル
+	const handleToggleCaseSelection = (caseId: Id<"cases">) => {
+		setSelectedCaseIds((prev) => {
+			const newSet = new Set(prev);
+			if (newSet.has(caseId)) {
+				newSet.delete(caseId);
+			} else {
+				// 最大3ケースまで選択可能
+				if (newSet.size >= 3) {
+					alert("最大3ケースまで同時に選択できます");
+					return prev;
+				}
+				newSet.add(caseId);
+			}
+			return newSet;
+		});
+	};
+
+	// ケース削除ハンドラー
+	const handleDeleteCase = async (caseId: Id<"cases">) => {
+		try {
+			await deleteCase({ caseId });
+			// 削除後、activeCaseIdをnullにして最初のケースが自動選択されるようにする
+			if (activeCaseId === caseId) {
+				setActiveCaseId(null);
+			}
+		} catch (error) {
+			alert(
+				error instanceof Error ? error.message : "ケースの削除に失敗しました",
+			);
+		}
+	};
+
+	// 履歴データ取得ハンドラー（タブ内の全企業データを取得）
+	const fetchHistoricalData = async (period: "1mo" | "3mo" | "6mo" | "1y") => {
+		if (!activeTabId || !tabCompanies) {
+			return;
+		}
+
+		// タブ内の全企業のコードを取得
+		const allCompaniesInTab = tabCompanies.filter(
+			(tc: { tabId: Id<"tabs">; companyCode: string }) =>
+				tc.tabId === activeTabId,
+		);
+		const allSymbols = allCompaniesInTab.map(
+			(tc: { companyCode: string }) => tc.companyCode,
+		);
+
+		if (allSymbols.length === 0) {
+			return;
+		}
+
+		setLoadingHistorical(true);
+		try {
+			// Convex Actionを呼び出し（全企業のデータを一括取得）
+			const result = await fetchYahooData({
+				symbols: allSymbols,
+				period,
+				interval: "1wk",
+			});
+
+			if (result.success && result.data) {
+				// データをステートに保存
+				const formatted: Record<
+					string,
+					Array<{
+						date: string;
+						close: number;
+						per?: number;
+						psr?: number;
+						roe?: number;
+					}>
+				> = {};
+
+				for (const [code, companyData] of Object.entries(result.data)) {
+					const data = companyData as {
+						history: Array<{
+							date: string;
+							close: number;
+							high: number;
+							low: number;
+							open: number;
+							volume: number;
+							per?: number;
+							psr?: number;
+						}>;
+					};
+					formatted[code] = data.history;
+				}
+
+				setHistoricalData(formatted);
+			}
+		} catch (error) {
+			console.error("[fetchHistoricalData] Error:", error);
+			alert(
+				`履歴データの取得に失敗しました: ${error instanceof Error ? error.message : "Unknown error"}`,
+			);
+		} finally {
+			setLoadingHistorical(false);
+		}
+	};
+
+	// 期間変更ハンドラー
+	const handleChartPeriodChange = (period: "1mo" | "3mo" | "6mo" | "1y") => {
+		setChartPeriod(period);
+		fetchHistoricalData(period);
+	};
+
 	// タブ読み込み中の場合はスピナーを表示
 	if (tabs === undefined) {
 		return (
@@ -380,6 +685,123 @@ export default function Home() {
 
 					{tabs.map((tab) => (
 						<TabsContent key={tab._id} value={tab._id} className="space-y-6">
+							{/* ケース管理セクション */}
+							<Card>
+								<CardHeader>
+									<CardTitle>保存済みケース</CardTitle>
+									<CardDescription>
+										チェックボックスで複数ケース（最大3つ）を選択すると、グラフとテーブルで比較できます
+									</CardDescription>
+									<CardAction>
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() => setCaseDialogOpen(true)}
+										>
+											現在のケースを保存
+										</Button>
+									</CardAction>
+								</CardHeader>
+								<CardContent>
+									{cases && cases.length > 0 ? (
+										<div className="space-y-4">
+											{/* ケースリスト */}
+											<div className="space-y-2">
+												{cases.map((caseItem) => (
+													<div
+														key={caseItem._id}
+														className={`flex items-center gap-3 border rounded p-3 hover:bg-muted/50 transition-colors ${
+															activeCaseId === caseItem._id
+																? "bg-primary/10 border-primary"
+																: ""
+														}`}
+													>
+														{/* 比較用チェックボックス */}
+														<Checkbox
+															checked={selectedCaseIds.has(caseItem._id)}
+															onCheckedChange={() =>
+																handleToggleCaseSelection(caseItem._id)
+															}
+															aria-label={`Compare case: ${caseItem.name}`}
+														/>
+
+														{/* ケース情報 */}
+														<button
+															type="button"
+															className="flex-1 text-left cursor-pointer"
+															onClick={() => handleSelectCase(caseItem._id)}
+															aria-label={`Select case: ${caseItem.name}`}
+														>
+															<div className="font-medium">
+																{caseItem.name}
+																{activeCaseId === caseItem._id && (
+																	<span className="ml-2 text-xs text-primary">
+																		(アクティブ)
+																	</span>
+																)}
+															</div>
+															<div className="text-xs text-muted-foreground">
+																{caseItem.companySet.length}社 -{" "}
+																{new Date(
+																	caseItem.createdAt,
+																).toLocaleDateString("ja-JP")}
+															</div>
+														</button>
+
+														{/* 削除ボタン */}
+														<Button
+															variant="ghost"
+															size="sm"
+															onClick={() => handleDeleteCase(caseItem._id)}
+															aria-label={`Delete case: ${caseItem.name}`}
+														>
+															<Trash2 className="h-4 w-4" />
+														</Button>
+													</div>
+												))}
+											</div>
+
+											{/* 選択中のケース表示 */}
+											{selectedCaseIds.size > 0 && (
+												<div className="border-t pt-3 mt-3">
+													<div className="text-sm font-medium mb-2">
+														比較中のケース ({selectedCaseIds.size})
+													</div>
+													<div className="flex flex-wrap gap-2">
+														{Array.from(selectedCaseIds).map((id) => {
+															const caseItem = cases.find((c) => c._id === id);
+															if (!caseItem) return null;
+															return (
+																<span
+																	key={id}
+																	className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary rounded px-2 py-1 text-xs"
+																>
+																	{caseItem.name}
+																	<button
+																		type="button"
+																		onClick={() =>
+																			handleToggleCaseSelection(id)
+																		}
+																		className="hover:text-primary/70"
+																		aria-label={`Remove ${caseItem.name} from comparison`}
+																	>
+																		×
+																	</button>
+																</span>
+															);
+														})}
+													</div>
+												</div>
+											)}
+										</div>
+									) : (
+										<p className="text-gray-500 text-sm">
+											保存済みのケースがありません。現在の企業選択を保存してください。
+										</p>
+									)}
+								</CardContent>
+							</Card>
+
 							{/* 企業ON/OFFリスト */}
 							<Card>
 								<CardHeader className="flex flex-row items-center justify-between">
@@ -405,8 +827,8 @@ export default function Home() {
 												>
 													<Switch
 														checked={c.enabled}
-														onCheckedChange={() =>
-															handleToggleCompany(c.companyCode)
+														onCheckedChange={(newEnabled) =>
+															handleToggleCompany(c.companyCode, newEnabled)
 														}
 														className="h-4"
 													/>
@@ -430,17 +852,27 @@ export default function Home() {
 								</CardContent>
 							</Card>
 
-							{/* サブタブ: グラフ vs 企業詳細 */}
+							{/* サブタブ: グラフ vs テーブル vs 時系列テーブル vs 企業詳細 */}
 							<Tabs
 								value={viewMode}
-								onValueChange={(v) => setViewMode(v as "chart" | "details")}
+								onValueChange={(v) =>
+									setViewMode(v as "chart" | "table" | "timeseries" | "details")
+								}
 							>
-								<TabsList className="bg-muted/50">
-									<TabsTrigger value="chart" className="text-sm">
+								<TabsList className="w-full">
+									<TabsTrigger value="chart">
 										<BarChart3 className="h-4 w-4 mr-2" />
 										グラフ
 									</TabsTrigger>
-									<TabsTrigger value="details" className="text-sm">
+									<TabsTrigger value="table">
+										<FileText className="h-4 w-4 mr-2" />
+										テーブル
+									</TabsTrigger>
+									<TabsTrigger value="timeseries">
+										<FileText className="h-4 w-4 mr-2" />
+										時系列テーブル
+									</TabsTrigger>
+									<TabsTrigger value="details">
 										<FileText className="h-4 w-4 mr-2" />
 										企業詳細
 									</TabsTrigger>
@@ -449,7 +881,79 @@ export default function Home() {
 								{/* グラフタブ */}
 								<TabsContent value="chart" className="mt-6">
 									{enabledCompanies.length > 0 ? (
-										<TimeSeriesChart companies={enabledCompanies} />
+										<div className="space-y-4">
+											{loadingHistorical && (
+												<div className="flex items-center gap-2 text-sm text-muted-foreground">
+													<Spinner className="h-4 w-4" />
+													<span>データを読み込み中...</span>
+												</div>
+											)}
+											{!loadingHistorical &&
+												Object.keys(historicalData).length > 0 && (
+													<div className="text-sm text-muted-foreground">
+														{Object.keys(historicalData).length}
+														社のデータを表示中
+													</div>
+												)}
+											<TimeSeriesChart
+												companies={enabledCompanies}
+												historicalData={historicalData}
+												period={chartPeriod}
+												onPeriodChange={handleChartPeriodChange}
+												selectedCases={Array.from(selectedCaseIds)
+													.map((id) => {
+														const caseItem = cases?.find((c) => c._id === id);
+														if (!caseItem) return null;
+														return {
+															caseId: id,
+															caseName: caseItem.name,
+															companyCodes: caseItem.companySet,
+														};
+													})
+													.filter(
+														(c): c is NonNullable<typeof c> => c !== null,
+													)}
+											/>
+										</div>
+									) : (
+										<Card>
+											<CardContent className="p-6">
+												<p className="text-gray-500 text-center">
+													有効な企業がありません。
+													<br />
+													上の企業リストでスイッチをONにしてください。
+												</p>
+											</CardContent>
+										</Card>
+									)}
+								</TabsContent>
+
+								{/* テーブルタブ */}
+								<TabsContent value="table" className="mt-6 space-y-6">
+									{/* ケース比較テーブル（履歴データ取得後のみ表示） */}
+									{selectedCasesData.length > 0 &&
+										Object.keys(historicalData).length > 0 && (
+											<CaseComparisonTable cases={selectedCasesData} />
+										)}
+								</TabsContent>
+
+								{/* 時系列テーブルタブ */}
+								<TabsContent value="timeseries" className="mt-6">
+									{enabledCompanies.length > 0 ? (
+										<div className="space-y-4">
+											{loadingHistorical && (
+												<div className="flex items-center gap-2 text-sm text-muted-foreground">
+													<Spinner className="h-4 w-4" />
+													<span>データを読み込み中...</span>
+												</div>
+											)}
+											<TimeSeriesTable
+												companies={enabledCompanies}
+												historicalData={historicalData}
+												period={chartPeriod}
+												onPeriodChange={handleChartPeriodChange}
+											/>
+										</div>
 									) : (
 										<Card>
 											<CardContent className="p-6">
@@ -469,11 +973,7 @@ export default function Home() {
 										<>
 											{/* 展開/折りたたみボタン */}
 											<div className="flex gap-2 justify-end">
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={expandAll}
-												>
+												<Button variant="outline" size="sm" onClick={expandAll}>
 													<ChevronDown className="h-4 w-4 mr-1" />
 													すべて展開
 												</Button>
@@ -527,8 +1027,13 @@ export default function Home() {
 																					})
 																					.slice(0, 5)
 																					.map(([key, value]) => (
-																						<span key={key} className="whitespace-nowrap">
-																							<span className="font-medium">{key}:</span>{" "}
+																						<span
+																							key={key}
+																							className="whitespace-nowrap"
+																						>
+																							<span className="font-medium">
+																								{key}:
+																							</span>{" "}
 																							{String(value)}
 																						</span>
 																					))}
@@ -550,373 +1055,400 @@ export default function Home() {
 																					削除
 																				</Button>
 																			</div>
-																<div className="flex items-center gap-2">
-																	<Button
-																		type="button"
-																		variant="outline"
-																		onClick={() =>
-																			openBuffettFor(c.companyCode)
-																		}
-																	>
-																		類似企業の情報を取得
-																	</Button>
-																	<Button
-																		type="button"
-																		onClick={() => handleParse(c.companyCode)}
-																		disabled={
-																			isParsing || c.paste.trim().length === 0
-																		}
-																	>
-																		{isParsing ? "変換中..." : "表に変換"}
-																	</Button>
-																</div>
-																<textarea
-																	className="border rounded p-2 min-h-40"
-																	placeholder="外部サイトでコピーしたブロックテキストを貼り付け"
-																	value={c.paste}
-																	onChange={(e) =>
-																		handlePaste(c.companyCode, e.target.value)
-																	}
-																	disabled={isParsing}
-																/>
-																{summary && (
-																	<table className="text-sm border rounded">
-																		<tbody>
-																			<tr>
-																				<th className="border px-2 py-1 text-left text-gray-500">
-																					コード
-																				</th>
-																				<td className="border px-2 py-1">
-																					{c.companyCode}
-																				</td>
-																			</tr>
-																			<tr>
-																				<th className="border px-2 py-1 text-left text-gray-500">
-																					銘柄名
-																				</th>
-																				<td className="border px-2 py-1">
-																					{c.companyName}
-																				</td>
-																			</tr>
-																			{Object.entries(summary)
-																				.filter(([key]) => {
-																					// 非表示にするカラムをフィルタリング
+																			<div className="flex items-center gap-2">
+																				<Button
+																					type="button"
+																					variant="outline"
+																					onClick={() =>
+																						openBuffettFor(c.companyCode)
+																					}
+																				>
+																					類似企業の情報を取得
+																				</Button>
+																				<Button
+																					type="button"
+																					onClick={() =>
+																						handleParse(c.companyCode)
+																					}
+																					disabled={
+																						isParsing ||
+																						c.paste.trim().length === 0
+																					}
+																				>
+																					{isParsing ? "変換中..." : "表に変換"}
+																				</Button>
+																			</div>
+																			<textarea
+																				className="border rounded p-2 min-h-40"
+																				placeholder="外部サイトでコピーしたブロックテキストを貼り付け"
+																				value={c.paste}
+																				onChange={(e) =>
+																					handlePaste(
+																						c.companyCode,
+																						e.target.value,
+																					)
+																				}
+																				disabled={isParsing}
+																			/>
+																			{summary && (
+																				<table className="text-sm border rounded">
+																					<tbody>
+																						<tr>
+																							<th className="border px-2 py-1 text-left text-gray-500">
+																								コード
+																							</th>
+																							<td className="border px-2 py-1">
+																								{c.companyCode}
+																							</td>
+																						</tr>
+																						<tr>
+																							<th className="border px-2 py-1 text-left text-gray-500">
+																								銘柄名
+																							</th>
+																							<td className="border px-2 py-1">
+																								{c.companyName}
+																							</td>
+																						</tr>
+																						{Object.entries(summary)
+																							.filter(([key]) => {
+																								// 非表示にするカラムをフィルタリング
+																								const hiddenColumns = [
+																									"配当利予",
+																									"ROE",
+																									"自資本比",
+																									"特徴語",
+																								];
+																								return !hiddenColumns.includes(
+																									key,
+																								);
+																							})
+																							.map(([key, value]) => (
+																								<tr key={key}>
+																									<th className="border px-2 py-1 text-left text-gray-500">
+																										{key}
+																									</th>
+																									<td className="border px-2 py-1">
+																										{String(value)}
+																									</td>
+																								</tr>
+																							))}
+																					</tbody>
+																				</table>
+																			)}
+																		</div>
+
+																		<div className="flex flex-col gap-3 min-w-0 flex-[2_1_480px]">
+																			{parsed &&
+																				(() => {
+																					// ヘッダーをフィルタリングして準備
 																					const hiddenColumns = [
 																						"配当利予",
+																						"配当利･予",
+																						"配当利回り",
 																						"ROE",
 																						"自資本比",
 																						"特徴語",
 																					];
-																					return !hiddenColumns.includes(key);
-																				})
-																				.map(([key, value]) => (
-																					<tr key={key}>
-																						<th className="border px-2 py-1 text-left text-gray-500">
-																							{key}
-																						</th>
-																						<td className="border px-2 py-1">
-																							{String(value)}
-																						</td>
-																					</tr>
-																				))}
-																		</tbody>
-																	</table>
-																)}
-															</div>
-
-															<div className="flex flex-col gap-3 min-w-0 flex-[2_1_480px]">
-																{parsed &&
-																	(() => {
-																		// ヘッダーをフィルタリングして準備
-																		const hiddenColumns = [
-																			"配当利予",
-																			"配当利･予",
-																			"配当利回り",
-																			"ROE",
-																			"自資本比",
-																			"特徴語",
-																		];
-																		const filteredHeaders = (
-																			parsed?.headers || []
-																		).filter(
-																			(h: string) => !hiddenColumns.includes(h),
-																		);
-
-																		// PSR計算用のヘルパー関数
-																		const calculatePSRFromRow = (
-																			row: Record<string, string>,
-																		): string => {
-																			const evStr = row.企業価値 || "";
-																			const salesStr = row.売上 || "";
-
-																			if (!evStr || !salesStr) return "N/A";
-
-																			// 企業価値を億円単位でパース（例: "124,976億円" → 124976）
-																			const parseEV = (
-																				str: string,
-																			): number | null => {
-																				const match =
-																					str.match(/([\d,]+\.?\d*)\s*億円/);
-																				if (!match) return null;
-																				return Number.parseFloat(
-																					match[1].replace(/,/g, ""),
-																				);
-																			};
-
-																			// 売上を百万円単位でパース（例: "779,707" → 779707）
-																			// 百万円 = 0.01億円なので、億円に変換するには 0.01 を掛ける
-																			const parseSales = (
-																				str: string,
-																			): number | null => {
-																				const match =
-																					str.match(/([\d,]+\.?\d*)/);
-																				if (!match) return null;
-																				const salesInMillions =
-																					Number.parseFloat(
-																						match[1].replace(/,/g, ""),
+																					const filteredHeaders = (
+																						parsed?.headers || []
+																					).filter(
+																						(h: string) =>
+																							!hiddenColumns.includes(h),
 																					);
-																				// 百万円 → 億円に変換
-																				return salesInMillions * 0.01;
-																			};
 
-																			const ev = parseEV(evStr);
-																			const sales = parseSales(salesStr);
+																					// PSR計算用のヘルパー関数
+																					const calculatePSRFromRow = (
+																						row: Record<string, string>,
+																					): string => {
+																						const evStr = row.企業価値 || "";
+																						const salesStr = row.売上 || "";
 
-																			if (
-																				ev === null ||
-																				sales === null ||
-																				sales === 0
-																			)
-																				return "N/A";
+																						if (!evStr || !salesStr)
+																							return "N/A";
 
-																			const psr = ev / sales;
-																			return psr.toFixed(2);
-																		};
+																						// 企業価値を億円単位でパース（例: "124,976億円" → 124976）
+																						const parseEV = (
+																							str: string,
+																						): number | null => {
+																							const match =
+																								str.match(
+																									/([\d,]+\.?\d*)\s*億円/,
+																								);
+																							if (!match) return null;
+																							return Number.parseFloat(
+																								match[1].replace(/,/g, ""),
+																							);
+																						};
 
-																		// 企業価値と売上の両方が存在するかチェック
-																		const hasEVAndSales =
-																			filteredHeaders.includes("企業価値") &&
-																			filteredHeaders.includes("売上");
+																						// 売上を百万円単位でパース（例: "779,707" → 779707）
+																						// 百万円 = 0.01億円なので、億円に変換するには 0.01 を掛ける
+																						const parseSales = (
+																							str: string,
+																						): number | null => {
+																							const match =
+																								str.match(/([\d,]+\.?\d*)/);
+																							if (!match) return null;
+																							const salesInMillions =
+																								Number.parseFloat(
+																									match[1].replace(/,/g, ""),
+																								);
+																							// 百万円 → 億円に変換
+																							return salesInMillions * 0.01;
+																						};
 
-																		// PSRを挿入する位置を見つける（PERの左 = 時価総額の後）
-																		const displayHeaders = [...filteredHeaders];
-																		if (hasEVAndSales) {
-																			// PERまたはPER (会)の位置を探す
-																			const perIndex = displayHeaders.findIndex(
-																				(h) =>
-																					h === "PER" ||
-																					h === "PER (会)" ||
-																					h.startsWith("PER"),
-																			);
-																			if (perIndex !== -1) {
-																				// PERの直前に挿入
-																				displayHeaders.splice(
-																					perIndex,
-																					0,
-																					"PSR",
-																				);
-																			} else {
-																				// PERが見つからない場合は時価総額の後に挿入
-																				const marketCapIndex =
-																					displayHeaders.indexOf("時価総額");
-																				if (marketCapIndex !== -1) {
-																					displayHeaders.splice(
-																						marketCapIndex + 1,
-																						0,
-																						"PSR",
-																					);
-																				}
-																			}
-																		}
+																						const ev = parseEV(evStr);
+																						const sales = parseSales(salesStr);
 
-																		return (
-																			<div className="w-full overflow-auto">
-																				<ScrollArea
-																					className={
-																						summary
-																							? "max-h-[70vh]"
-																							: "max-h-60"
+																						if (
+																							ev === null ||
+																							sales === null ||
+																							sales === 0
+																						)
+																							return "N/A";
+
+																						const psr = ev / sales;
+																						return psr.toFixed(2);
+																					};
+
+																					// 企業価値と売上の両方が存在するかチェック
+																					const hasEVAndSales =
+																						filteredHeaders.includes(
+																							"企業価値",
+																						) &&
+																						filteredHeaders.includes("売上");
+
+																					// PSRを挿入する位置を見つける（PERの左 = 時価総額の後）
+																					const displayHeaders = [
+																						...filteredHeaders,
+																					];
+																					if (hasEVAndSales) {
+																						// PERまたはPER (会)の位置を探す
+																						const perIndex =
+																							displayHeaders.findIndex(
+																								(h) =>
+																									h === "PER" ||
+																									h === "PER (会)" ||
+																									h.startsWith("PER"),
+																							);
+																						if (perIndex !== -1) {
+																							// PERの直前に挿入
+																							displayHeaders.splice(
+																								perIndex,
+																								0,
+																								"PSR",
+																							);
+																						} else {
+																							// PERが見つからない場合は時価総額の後に挿入
+																							const marketCapIndex =
+																								displayHeaders.indexOf(
+																									"時価総額",
+																								);
+																							if (marketCapIndex !== -1) {
+																								displayHeaders.splice(
+																									marketCapIndex + 1,
+																									0,
+																									"PSR",
+																								);
+																							}
+																						}
 																					}
-																				>
-																					<table className="min-w-full border mt-2 whitespace-nowrap table-auto">
-																						<thead>
-																							<tr>
-																								<th className="border px-2 py-1 text-left" />
-																								<th className="border px-2 py-1 text-left">
-																									コード
-																								</th>
-																								<th className="border px-2 py-1 text-left">
-																									銘柄名
-																								</th>
-																								{displayHeaders.map(
-																									(h: string) => (
-																										<th
-																											key={h}
-																											className="border px-2 py-1 text-left"
-																										>
-																											{h}
-																										</th>
-																									),
-																								)}
-																							</tr>
-																						</thead>
-																						<tbody>
-																							{parsed?.rows?.map(
-																								(
-																									r: Record<string, string>,
-																									idx: number,
-																								) => {
-																									const rowCode = String(
-																										r.code ?? "",
-																									);
-																									const rowName = String(
-																										r.name ?? "",
-																									);
-																									const isAlreadyAdded =
-																										tabCompanies?.some(
-																											(tc) =>
-																												tc.companyCode ===
-																												rowCode,
-																										) ?? false;
 
-																									return (
-																										<tr
-																											key={`${r.code ?? r.name ?? "row"}-${idx}`}
-																											className="hover:bg-gray-50"
-																										>
-																											<td className="border px-2 py-1">
-																												<Button
-																													variant="ghost"
-																													onClick={async () => {
-																														if (
-																															rowCode &&
-																															rowName &&
-																															activeTabId
-																														) {
-																															// 企業をタブに追加
-																															await handleAddCompany(
-																																{
-																																	code: rowCode,
-																																	name: rowName,
-																																},
-																															);
-
-																															// 行データからサマリーを作成してPSRも計算
-																															const getRowValue =
-																																(key: string) =>
-																																	String(
-																																		r[key] ??
-																																			"",
-																																	);
-																															const summaryData =
-																																{
-																																	企業価値:
-																																		getRowValue(
-																																			"企業価値",
-																																		),
-																																	時価総額:
-																																		getRowValue(
-																																			"時価総額",
-																																		),
-																																	PSR: calculatePSRFromRow(
-																																		r,
-																																	),
-																																	"PER (会)":
-																																		getRowValue(
-																																			"PER (会)",
-																																		) ||
-																																		getRowValue(
-																																			"PER",
-																																		),
-																																	売上: getRowValue(
-																																		"売上",
-																																	),
-																																	営利: getRowValue(
-																																		"営利",
-																																	),
-																																	純利: getRowValue(
-																																		"純利",
-																																	),
-																																	配当利予:
-																																		getRowValue(
-																																			"配当利予",
-																																		) ||
-																																		getRowValue(
-																																			"配当利･予",
-																																		) ||
-																																		getRowValue(
-																																			"配当利回り",
-																																		),
-																																	ROE: getRowValue(
-																																		"ROE",
-																																	),
-																																	自資本比:
-																																		getRowValue(
-																																			"自資本比",
-																																		),
-																																	特徴語:
-																																		getRowValue(
-																																			"特徴語",
-																																		),
-																																};
-
-																															// サマリーデータを保存
-																															await updateCompanyData(
-																																{
-																																	tabId:
-																																		activeTabId,
-																																	companyCode:
-																																		rowCode,
-																																	summary:
-																																		JSON.stringify(
-																																			summaryData,
-																																		),
-																																},
-																															);
-																														}
-																													}}
-																													disabled={
-																														!rowCode ||
-																														!rowName ||
-																														isAlreadyAdded
-																													}
-																													className="text-blue-600 text-sm h-auto py-1 px-2"
-																												>
-																													{isAlreadyAdded
-																														? "追加済み"
-																														: "追加"}
-																												</Button>
-																											</td>
-																											<td className="border px-2 py-1">
-																												{r.code ?? ""}
-																											</td>
-																											<td className="border px-2 py-1">
-																												{r.name ?? ""}
-																											</td>
+																					return (
+																						<div className="w-full overflow-auto">
+																							<ScrollArea
+																								className={
+																									summary
+																										? "max-h-[70vh]"
+																										: "max-h-60"
+																								}
+																							>
+																								<table className="min-w-full border mt-2 whitespace-nowrap table-auto">
+																									<thead>
+																										<tr>
+																											<th className="border px-2 py-1 text-left" />
+																											<th className="border px-2 py-1 text-left">
+																												コード
+																											</th>
+																											<th className="border px-2 py-1 text-left">
+																												銘柄名
+																											</th>
 																											{displayHeaders.map(
 																												(h: string) => (
-																													<td
+																													<th
 																														key={h}
-																														className="border px-2 py-1"
+																														className="border px-2 py-1 text-left"
 																													>
-																														{h === "PSR"
-																															? calculatePSRFromRow(
-																																	r,
-																																)
-																															: (r[h] ?? "")}
-																													</td>
+																														{h}
+																													</th>
 																												),
 																											)}
 																										</tr>
-																									);
-																								},
-																							)}
-																						</tbody>
-																					</table>
-																				</ScrollArea>
-																					</div>
-																				);
-																			})()}
+																									</thead>
+																									<tbody>
+																										{parsed?.rows?.map(
+																											(
+																												r: Record<
+																													string,
+																													string
+																												>,
+																												idx: number,
+																											) => {
+																												const rowCode = String(
+																													r.code ?? "",
+																												);
+																												const rowName = String(
+																													r.name ?? "",
+																												);
+																												const isAlreadyAdded =
+																													tabCompanies?.some(
+																														(tc) =>
+																															tc.companyCode ===
+																															rowCode,
+																													) ?? false;
+
+																												return (
+																													<tr
+																														key={`${r.code ?? r.name ?? "row"}-${idx}`}
+																														className="hover:bg-gray-50"
+																													>
+																														<td className="border px-2 py-1">
+																															<Button
+																																variant="ghost"
+																																onClick={async () => {
+																																	if (
+																																		rowCode &&
+																																		rowName &&
+																																		activeTabId
+																																	) {
+																																		// 企業をタブに追加
+																																		await handleAddCompany(
+																																			{
+																																				code: rowCode,
+																																				name: rowName,
+																																			},
+																																		);
+
+																																		// 行データからサマリーを作成してPSRも計算
+																																		const getRowValue =
+																																			(
+																																				key: string,
+																																			) =>
+																																				String(
+																																					r[
+																																						key
+																																					] ??
+																																						"",
+																																				);
+																																		const summaryData =
+																																			{
+																																				企業価値:
+																																					getRowValue(
+																																						"企業価値",
+																																					),
+																																				時価総額:
+																																					getRowValue(
+																																						"時価総額",
+																																					),
+																																				PSR: calculatePSRFromRow(
+																																					r,
+																																				),
+																																				"PER (会)":
+																																					getRowValue(
+																																						"PER (会)",
+																																					) ||
+																																					getRowValue(
+																																						"PER",
+																																					),
+																																				売上: getRowValue(
+																																					"売上",
+																																				),
+																																				営利: getRowValue(
+																																					"営利",
+																																				),
+																																				純利: getRowValue(
+																																					"純利",
+																																				),
+																																				配当利予:
+																																					getRowValue(
+																																						"配当利予",
+																																					) ||
+																																					getRowValue(
+																																						"配当利･予",
+																																					) ||
+																																					getRowValue(
+																																						"配当利回り",
+																																					),
+																																				ROE: getRowValue(
+																																					"ROE",
+																																				),
+																																				自資本比:
+																																					getRowValue(
+																																						"自資本比",
+																																					),
+																																				特徴語:
+																																					getRowValue(
+																																						"特徴語",
+																																					),
+																																			};
+
+																																		// サマリーデータを保存
+																																		await updateCompanyData(
+																																			{
+																																				tabId:
+																																					activeTabId,
+																																				companyCode:
+																																					rowCode,
+																																				summary:
+																																					JSON.stringify(
+																																						summaryData,
+																																					),
+																																			},
+																																		);
+																																	}
+																																}}
+																																disabled={
+																																	!rowCode ||
+																																	!rowName ||
+																																	isAlreadyAdded
+																																}
+																																className="text-blue-600 text-sm h-auto py-1 px-2"
+																															>
+																																{isAlreadyAdded
+																																	? "追加済み"
+																																	: "追加"}
+																															</Button>
+																														</td>
+																														<td className="border px-2 py-1">
+																															{r.code ?? ""}
+																														</td>
+																														<td className="border px-2 py-1">
+																															{r.name ?? ""}
+																														</td>
+																														{displayHeaders.map(
+																															(h: string) => (
+																																<td
+																																	key={h}
+																																	className="border px-2 py-1"
+																																>
+																																	{h === "PSR"
+																																		? calculatePSRFromRow(
+																																				r,
+																																			)
+																																		: (r[h] ??
+																																			"")}
+																																</td>
+																															),
+																														)}
+																													</tr>
+																												);
+																											},
+																										)}
+																									</tbody>
+																								</table>
+																							</ScrollArea>
+																						</div>
+																					);
+																				})()}
 																		</div>
 																	</CardContent>
 																</AccordionContent>
@@ -1022,6 +1554,41 @@ export default function Home() {
 					<DialogFooter>
 						<Button onClick={handleCreateTab} disabled={!newTabName.trim()}>
 							作成
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			{/* ケース保存ダイアログ */}
+			<Dialog open={caseDialogOpen} onOpenChange={setCaseDialogOpen}>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>ケースを保存</DialogTitle>
+					</DialogHeader>
+					<div className="py-4">
+						<label htmlFor="new-case-name" className="text-sm font-medium">
+							ケース名
+						</label>
+						<Input
+							id="new-case-name"
+							value={newCaseName}
+							onChange={(e) => setNewCaseName(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter") {
+									handleSaveCase();
+								}
+							}}
+							placeholder="例: ケース1"
+							className="mt-2"
+							autoFocus
+						/>
+						<p className="text-xs text-muted-foreground mt-2">
+							現在有効な企業（{enabledCompanies.length}社）を保存します
+						</p>
+					</div>
+					<DialogFooter>
+						<Button onClick={handleSaveCase} disabled={!newCaseName.trim()}>
+							保存
 						</Button>
 					</DialogFooter>
 				</DialogContent>

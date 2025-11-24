@@ -11,10 +11,27 @@ export const createTab = mutation({
 		const allTabs = await ctx.db.query("tabs").order("desc").take(1);
 		const maxOrder = allTabs.length > 0 ? allTabs[0].order : -1;
 
+		const now = Date.now();
+
+		// タブを作成（defaultCaseIdは後で設定）
 		const tabId = await ctx.db.insert("tabs", {
 			name,
 			order: maxOrder + 1,
-			createdAt: Date.now(),
+			createdAt: now,
+		});
+
+		// デフォルトケースを作成
+		const defaultCaseId = await ctx.db.insert("cases", {
+			tabId,
+			name: "デフォルトケース",
+			companySet: [],
+			createdAt: now,
+			updatedAt: now,
+		});
+
+		// タブにdefaultCaseIdを設定
+		await ctx.db.patch(tabId, {
+			defaultCaseId,
 		});
 
 		return tabId;
