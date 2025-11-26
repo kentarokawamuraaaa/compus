@@ -35,15 +35,8 @@ import {
 	FileText,
 	ChevronDown,
 	ChevronUp,
-	Save,
 	Trash2,
-	Copy,
 } from "lucide-react";
-import {
-	extractMetrics,
-	calculateAverages,
-	type CompanyMetrics,
-} from "@/lib/metrics";
 import {
 	Dialog,
 	DialogContent,
@@ -428,25 +421,6 @@ export default function Home() {
 				code: c.companyCode,
 				name: c.companyName,
 			})) ?? [];
-
-	// 平均値計算用のデータ準備
-	const companyMetrics: CompanyMetrics[] =
-		tabCompanies
-			?.filter((c) => c.enabled && c.parsed)
-			.map((c) => {
-				try {
-					const parsed = JSON.parse(c.parsed);
-					return extractMetrics(parsed, c.companyCode, c.companyName);
-				} catch {
-					return {
-						code: c.companyCode,
-						name: c.companyName,
-						metrics: {},
-					};
-				}
-			}) ?? [];
-
-	const averageMetrics = calculateAverages(companyMetrics);
 
 	// ケース保存ハンドラー
 	const handleSaveCase = async () => {
@@ -896,7 +870,9 @@ export default function Home() {
 															companyCodes: caseItem.companySet,
 														};
 													})
-													.filter((c): c is NonNullable<typeof c> => c !== null)}
+													.filter(
+														(c): c is NonNullable<typeof c> => c !== null,
+													)}
 											/>
 										</div>
 									) : (
