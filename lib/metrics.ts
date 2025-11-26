@@ -61,33 +61,65 @@ export function extractMetrics(
 	code: string,
 	name: string
 ): CompanyMetrics {
-	console.log(`[extractMetrics] Processing ${name} (${code})`);
-	console.log("[extractMetrics] Parsed data:", parsed);
-
 	const metrics: Record<string, number | null> = {};
 
 	if (!parsed || !parsed.headers || !parsed.rows || parsed.rows.length === 0) {
-		console.log("[extractMetrics] Invalid or empty parsed data");
 		return { code, name, metrics };
 	}
 
 	const headers = parsed.headers;
-	const row = parsed.rows[0]; // Assuming first row is the company data
 
-	console.log("[extractMetrics] Headers:", headers);
-	console.log("[extractMetrics] Row data:", row);
+	// Find the row matching the company code
+	let row: string[] | Record<string, string> | undefined;
 
-	for (let i = 0; i < headers.length; i++) {
-		const header = headers[i];
-		const value = row[i];
-		if (value) {
-			const parsedValue = parseJapaneseNumber(value);
-			console.log(`[extractMetrics] ${header}: "${value}" -> ${parsedValue}`);
-			metrics[header] = parsedValue;
+	for (const r of parsed.rows) {
+		if (Array.isArray(r)) {
+			// Array format: assume code is in first column
+			if (r[0] === code) {
+				row = r;
+				break;
+			}
+		} else if (r && typeof r === "object") {
+			// Object format: check code property
+			const rowObj = r as Record<string, string>;
+			if (rowObj.code === code) {
+				row = rowObj;
+				break;
+			}
 		}
 	}
 
-	console.log("[extractMetrics] Final metrics:", metrics);
+	// Fallback to first row if no match found (backward compatibility)
+	if (!row && parsed.rows.length > 0) {
+		row = parsed.rows[0];
+	}
+
+	if (!row) {
+		return { code, name, metrics };
+	}
+
+	// Handle both array and object row formats
+	if (Array.isArray(row)) {
+		// Array format: row[i] corresponds to headers[i]
+		for (let i = 0; i < headers.length; i++) {
+			const header = headers[i];
+			const value = row[i];
+			if (value) {
+				const parsedValue = parseJapaneseNumber(value);
+				metrics[header] = parsedValue;
+			}
+		}
+	} else {
+		// Object format: row is an object with header names as keys
+		for (const header of headers) {
+			const value = row[header];
+			if (value) {
+				const parsedValue = parseJapaneseNumber(value);
+				metrics[header] = parsedValue;
+			}
+		}
+	}
+
 	return { code, name, metrics };
 }
 
@@ -97,41 +129,33 @@ export function extractMetrics(
 export function calculateAverages(
 	companies: CompanyMetrics[]
 ): AverageMetrics {
-	console.log("[calculateAverages] Input companies:", companies);
-
 	if (companies.length === 0) {
-		console.log("[calculateAverages] No companies provided");
 		return {};
 	}
 
 	// Collect all unique metric keys
 	const allKeys = new Set<string>();
-	companies.forEach((company) => {
-		Object.keys(company.metrics).forEach((key) => allKeys.add(key));
-	});
-
-	console.log("[calculateAverages] All metric keys:", Array.from(allKeys));
+	for (const company of companies) {
+		for (const key of Object.keys(company.metrics)) {
+			allKeys.add(key);
+		}
+	}
 
 	const averages: AverageMetrics = {};
 
-	allKeys.forEach((key) => {
+	for (const key of allKeys) {
 		const values = companies
 			.map((company) => company.metrics[key])
-			.filter((v): v is number => v !== null && !isNaN(v));
-
-		console.log(`[calculateAverages] ${key}: values =`, values);
+			.filter((v): v is number => v !== null && !Number.isNaN(v));
 
 		if (values.length > 0) {
 			const sum = values.reduce((acc, val) => acc + val, 0);
 			averages[key] = sum / values.length;
-			console.log(`[calculateAverages] ${key}: average = ${averages[key]}`);
 		} else {
 			averages[key] = null;
-			console.log(`[calculateAverages] ${key}: no valid values, setting to null`);
 		}
-	});
+	}
 
-	console.log("[calculateAverages] Final averages:", averages);
 	return averages;
 }
 

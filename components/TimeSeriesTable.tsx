@@ -15,11 +15,18 @@ interface HistoricalDataPoint {
 	psr?: number;
 }
 
+interface CaseData {
+	caseId: string;
+	caseName: string;
+	companyCodes: string[];
+}
+
 interface TimeSeriesTableProps {
 	companies: CompanyRow[];
 	historicalData?: Record<string, HistoricalDataPoint[]>;
 	period?: "1mo" | "3mo" | "6mo" | "1y";
 	onPeriodChange?: (period: "1mo" | "3mo" | "6mo" | "1y") => void;
+	selectedCases?: CaseData[];
 }
 
 // 日付を表示用にフォーマット
@@ -36,6 +43,7 @@ export function TimeSeriesTable({
 	historicalData,
 	period: externalPeriod,
 	onPeriodChange,
+	selectedCases,
 }: TimeSeriesTableProps) {
 	const [metric, setMetric] = useState<string>("PSR");
 	const [internalPeriod, setInternalPeriod] = useState<number>(6);
@@ -76,7 +84,7 @@ export function TimeSeriesTable({
 	// テーブルデータを生成
 	const tableData = useMemo(() => {
 		if (!historicalData || Object.keys(historicalData).length === 0) {
-			return { dates: [], rows: [], averageValues: [] };
+			return { dates: [], rows: [], averageValues: [], caseAverageRows: [] };
 		}
 
 		// 全企業の日付の和集合を取得
@@ -122,12 +130,46 @@ export function TimeSeriesTable({
 			return null;
 		});
 
+		// ケース別平均値を計算
+		const caseAverageRows = (selectedCases ?? []).map((caseData) => {
+			// このケースに含まれる企業でhistoricalDataがある企業コード
+			const caseCompanyCodes = caseData.companyCodes.filter(
+				(code) => historicalData[code] && historicalData[code].length > 0
+			);
+
+			const values = sortedDates.map((date) => {
+				const validValues: number[] = [];
+				for (const code of caseCompanyCodes) {
+					const companyData = historicalData[code];
+					const dataPoint = companyData?.find((p) => p.date === date);
+					if (dataPoint) {
+						const value = metric === "PSR" ? dataPoint.psr : dataPoint.per;
+						if (value !== undefined && value !== null && !Number.isNaN(value)) {
+							validValues.push(value);
+						}
+					}
+				}
+				if (validValues.length > 0) {
+					return validValues.reduce((sum, v) => sum + v, 0) / validValues.length;
+				}
+				return null;
+			});
+
+			return {
+				caseId: caseData.caseId,
+				caseName: caseData.caseName,
+				companyCount: caseCompanyCodes.length,
+				values,
+			};
+		});
+
 		return {
 			dates: sortedDates,
 			rows,
 			averageValues,
+			caseAverageRows,
 		};
-	}, [historicalData, companiesWithData, metric]);
+	}, [historicalData, companiesWithData, metric, selectedCases]);
 
 	// テーブルをクリップボードにコピー
 	const handleCopy = () => {
@@ -144,6 +186,10 @@ export function TimeSeriesTable({
 				"平均",
 				...tableData.averageValues.map((v) => (v !== null ? v.toFixed(2) : "N/A")),
 			],
+			...tableData.caseAverageRows.map((caseRow) => [
+				`${caseRow.caseName}(${caseRow.companyCount}社)`,
+				...caseRow.values.map((v) => (v !== null ? v.toFixed(2) : "N/A")),
+			]),
 		];
 
 		// TSV形式で作成（Excelに貼り付けやすい）
@@ -170,6 +216,10 @@ export function TimeSeriesTable({
 				"平均",
 				...tableData.averageValues.map((v) => (v !== null ? v.toFixed(2) : "N/A")),
 			],
+			...tableData.caseAverageRows.map((caseRow) => [
+				`${caseRow.caseName}(${caseRow.companyCount}社)`,
+				...caseRow.values.map((v) => (v !== null ? v.toFixed(2) : "N/A")),
+			]),
 		];
 
 		const csv = [headers.join(","), ...dataRows.map((row) => row.join(","))].join(
@@ -297,6 +347,37 @@ export function TimeSeriesTable({
 										</td>
 									))}
 								</tr>
+								{/* ケース別平均行 */}
+								{tableData.caseAverageRows.map((caseRow, caseIndex) => {
+									const colors = [
+										"bg-blue-50 dark:bg-blue-950",
+										"bg-green-50 dark:bg-green-950",
+										"bg-orange-50 dark:bg-orange-950",
+									];
+									return (
+										<tr
+											key={caseRow.caseId}
+											className={`${colors[caseIndex % colors.length]} font-medium`}
+										>
+											<td className="border px-3 py-2">
+												{caseRow.caseName}
+												<div className="text-xs text-muted-foreground">
+													({caseRow.companyCount}社)
+												</div>
+											</td>
+											{tableData.dates.map((date, index) => (
+												<td
+													key={`case-${caseRow.caseId}-${date}`}
+													className="border px-3 py-2 text-right"
+												>
+													{caseRow.values[index] !== null
+														? caseRow.values[index]?.toFixed(2)
+														: "N/A"}
+												</td>
+											))}
+										</tr>
+									);
+								})}
 							</tbody>
 						</table>
 					</div>

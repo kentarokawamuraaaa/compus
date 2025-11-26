@@ -21,7 +21,6 @@ import { Switch } from "@/components/ui/switch";
 import { Spinner } from "@/components/ui/spinner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { TimeSeriesChart } from "@/components/TimeSeriesChart";
-import { CaseComparisonTable } from "@/components/CaseComparisonTable";
 import { TimeSeriesTable } from "@/components/TimeSeriesTable";
 import {
 	Accordion,
@@ -44,7 +43,6 @@ import {
 	extractMetrics,
 	calculateAverages,
 	type CompanyMetrics,
-	type AverageMetrics,
 } from "@/lib/metrics";
 import {
 	Dialog,
@@ -450,57 +448,6 @@ export default function Home() {
 
 	const averageMetrics = calculateAverages(companyMetrics);
 
-	// 選択中のケースの平均値データを準備
-	const selectedCasesData =
-		cases && selectedCaseIds.size > 0
-			? Array.from(selectedCaseIds)
-					.map((caseId) => {
-						const caseItem = cases.find((c) => c._id === caseId);
-						if (!caseItem) return null;
-
-						console.log("[page.tsx] Processing case:", caseItem.name);
-						console.log("[page.tsx] Case companySet:", caseItem.companySet);
-
-						// このケースの企業のメトリクスを抽出
-						const caseCompanyMetrics = tabCompanies
-							?.filter(
-								(c) =>
-									caseItem.companySet.includes(c.companyCode) &&
-									c.enabled &&
-									c.parsed,
-							)
-							.map((c) => {
-								try {
-									const parsed = JSON.parse(c.parsed);
-									const metrics = extractMetrics(parsed, c.companyCode, c.companyName);
-									console.log(`[page.tsx] Metrics for ${c.companyName}:`, metrics);
-									return metrics;
-								} catch {
-									return {
-										code: c.companyCode,
-										name: c.companyName,
-										metrics: {},
-									};
-								}
-							});
-
-						console.log("[page.tsx] caseCompanyMetrics:", caseCompanyMetrics);
-
-						const caseAverages = calculateAverages(caseCompanyMetrics ?? []);
-						console.log("[page.tsx] caseAverages:", caseAverages);
-
-						return {
-							caseId,
-							caseName: caseItem.name,
-							averages: caseAverages,
-							companyCount: caseItem.companySet.length,
-						};
-					})
-					.filter((c): c is NonNullable<typeof c> => c !== null)
-			: [];
-
-	console.log("[page.tsx] selectedCasesData:", selectedCasesData);
-
 	// ケース保存ハンドラー
 	const handleSaveCase = async () => {
 		if (!activeTabId || !newCaseName.trim()) {
@@ -864,13 +811,9 @@ export default function Home() {
 										<BarChart3 className="h-4 w-4 mr-2" />
 										グラフ
 									</TabsTrigger>
-									<TabsTrigger value="table">
-										<FileText className="h-4 w-4 mr-2" />
-										テーブル
-									</TabsTrigger>
 									<TabsTrigger value="timeseries">
 										<FileText className="h-4 w-4 mr-2" />
-										時系列テーブル
+										テーブル
 									</TabsTrigger>
 									<TabsTrigger value="details">
 										<FileText className="h-4 w-4 mr-2" />
@@ -928,15 +871,6 @@ export default function Home() {
 									)}
 								</TabsContent>
 
-								{/* テーブルタブ */}
-								<TabsContent value="table" className="mt-6 space-y-6">
-									{/* ケース比較テーブル（履歴データ取得後のみ表示） */}
-									{selectedCasesData.length > 0 &&
-										Object.keys(historicalData).length > 0 && (
-											<CaseComparisonTable cases={selectedCasesData} />
-										)}
-								</TabsContent>
-
 								{/* 時系列テーブルタブ */}
 								<TabsContent value="timeseries" className="mt-6">
 									{enabledCompanies.length > 0 ? (
@@ -952,6 +886,17 @@ export default function Home() {
 												historicalData={historicalData}
 												period={chartPeriod}
 												onPeriodChange={handleChartPeriodChange}
+												selectedCases={Array.from(selectedCaseIds)
+													.map((id) => {
+														const caseItem = cases?.find((c) => c._id === id);
+														if (!caseItem) return null;
+														return {
+															caseId: id,
+															caseName: caseItem.name,
+															companyCodes: caseItem.companySet,
+														};
+													})
+													.filter((c): c is NonNullable<typeof c> => c !== null)}
 											/>
 										</div>
 									) : (
