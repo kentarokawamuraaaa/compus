@@ -55,15 +55,20 @@ Required in `.env.local`:
 ### Backend Architecture (Convex)
 
 Convex schema in [convex/schema.ts](convex/schema.ts):
-- `companies` table: `code`, `name`, `nameLower`, `uploadedAt`, `extra` (optional record)
-- Indexes: `by_code`, `by_nameLower` for efficient queries
+- `companies` table: Master company list with `code`, `name`, `nameLower`, `uploadedAt`, `extra`
+- `tabs` table: Workspace tabs with `name`, `order`, `createdAt`, `defaultCaseId`
+- `tabCompanies` table: Companies within a tab with `tabId`, `companyCode`, `companyName`, `enabled`, `order`, `paste`, `parsed`, `summary`
+- `cases` table: Analysis cases per tab with `tabId`, `name`, `companySet`, `description`, `notes`
+- `caseSnapshots` table: Historical snapshots of case metrics
+- `historicalData` table: Cached Yahoo Finance data with 24h TTL
 
-Convex functions in [convex/companies.ts](convex/companies.ts):
-- `replaceAll`: mutation that deletes all companies and inserts new batch
-- `upsertMany`: mutation that updates existing or inserts new companies
-- `search`: query with prefix search on `nameLower` using range scan
-- `getByCode`: query to fetch single company by normalized code
-- Helper: `normalizeCode()` strips non-alphanumeric and uppercases
+Key Convex functions:
+- [convex/companies.ts](convex/companies.ts): CRUD for master company list
+- [convex/tabs.ts](convex/tabs.ts): Tab management (create, rename, delete, reorder)
+- [convex/tabCompanies.ts](convex/tabCompanies.ts): Companies per tab with enabled/disabled state
+- [convex/cases.ts](convex/cases.ts): Case management, snapshots, and company set operations
+- [convex/yahooFinance.ts](convex/yahooFinance.ts): Convex action (Node.js runtime) to fetch Yahoo Finance data
+- [convex/historicalData.ts](convex/historicalData.ts): Cache for historical price/metrics data
 
 ### Frontend Architecture
 
@@ -73,12 +78,16 @@ Convex functions in [convex/companies.ts](convex/companies.ts):
 - **API Routes**:
   - [app/api/parse/route.ts](app/api/parse/route.ts): POST endpoint for parsing Japanese tabular text
   - [app/api/companies/search/route.ts](app/api/companies/search/route.ts): GET endpoint for searching tosyo.json
+  - [app/api/historical/route.ts](app/api/historical/route.ts): POST endpoint for fetching Yahoo Finance historical data
+- **Key Components**:
+  - [components/TimeSeriesChart.tsx](components/TimeSeriesChart.tsx): Recharts-based historical metrics visualization
+  - [components/TimeSeriesTable.tsx](components/TimeSeriesTable.tsx): Tabular view of time series data with case integration
 
 ### UI Components (shadcn/ui)
 
 Located in [components/ui/](components/ui/):
 - Uses "new-york" style variant
-- Components: `button`, `card`, `input`, `scroll-area`, `skeleton`
+- Components include: `accordion`, `button`, `card`, `checkbox`, `dialog`, `input`, `scroll-area`, `skeleton`, `switch`, `tabs`
 - Configuration: [components.json](components.json)
 - Path aliases: `@/components`, `@/lib/utils`
 
@@ -100,6 +109,15 @@ Located in [components/ui/](components/ui/):
 
 Validation: `isValidParsed()` ensures headers include key financial terms (PER, 時価, 企業価値, ROE, 売上)
 
+### Yahoo Finance Integration
+
+[convex/yahooFinance.ts](convex/yahooFinance.ts) fetches historical stock data:
+- Uses `"use node"` directive for Node.js runtime in Convex
+- Fetches via `yahoo-finance2` library with `chart()` and `quoteSummary()` APIs
+- Japanese stocks use `.T` suffix (e.g., `7203.T` for Toyota)
+- Calculates time-series PER and PSR from price history and current multiples
+- Results cached in `historicalData` table with 24-hour TTL
+
 ## Key Technical Details
 
 - **Tailwind CSS v4**: Uses new PostCSS plugin (`@tailwindcss/postcss`)
@@ -108,6 +126,7 @@ Validation: `isValidParsed()` ensures headers include key financial terms (PER, 
 - **Company data file**: [app/tosyo.json](app/tosyo.json) is a large (1.6MB) static dataset loaded at runtime
 - **Debounced search**: 200ms debounce on search input using `lodash.debounce`
 - **React Hooks**: Do NOT use `useCallback` or `useMemo` - use regular functions and variables instead
+- **Charts**: Uses Recharts library for time series visualization
 
 ## Common Patterns
 
