@@ -1,7 +1,7 @@
 "use client";
 
 import { Copy } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,11 +21,13 @@ interface CaseData {
 	companyCodes: string[];
 }
 
+type PeriodType = "6mo" | "1y" | "2y" | "5y";
+
 interface TimeSeriesTableProps {
 	companies: CompanyRow[];
 	historicalData?: Record<string, HistoricalDataPoint[]>;
-	period?: "1mo" | "3mo" | "6mo" | "1y";
-	onPeriodChange?: (period: "1mo" | "3mo" | "6mo" | "1y") => void;
+	period?: PeriodType;
+	onPeriodChange?: (period: PeriodType) => void;
 	selectedCases?: CaseData[];
 }
 
@@ -38,6 +40,51 @@ function formatDate(isoDate: string): string {
 	return `${year}/${month}/${day}`;
 }
 
+type Pitch = "weekly" | "monthly" | "quarterly" | "yearly";
+
+// ピッチに応じてデータを集計する関数
+function aggregateByPitch(
+	dates: string[],
+	pitch: Pitch,
+): { key: string; dates: string[] }[] {
+	if (pitch === "weekly") {
+		// 週次: そのまま各日付を返す
+		return dates.map((date) => ({ key: date, dates: [date] }));
+	}
+
+	// グループ化のキーを生成
+	const groups = new Map<string, string[]>();
+	for (const date of dates) {
+		const d = new Date(date);
+		let key: string;
+		switch (pitch) {
+			case "monthly":
+				key = `${d.getFullYear()}/${d.getMonth() + 1}`;
+				break;
+			case "quarterly": {
+				const quarter = Math.floor(d.getMonth() / 3) + 1;
+				key = `${d.getFullYear()}/Q${quarter}`;
+				break;
+			}
+			case "yearly":
+				key = `${d.getFullYear()}`;
+				break;
+			default:
+				key = date;
+		}
+		if (!groups.has(key)) {
+			groups.set(key, []);
+		}
+		groups.get(key)?.push(date);
+	}
+
+	// 各グループの最終日の値を使用するためのデータを返す
+	return Array.from(groups.entries()).map(([key, groupDates]) => ({
+		key,
+		dates: groupDates.sort(), // 日付順にソート
+	}));
+}
+
 export function TimeSeriesTable({
 	companies,
 	historicalData,
@@ -47,12 +94,20 @@ export function TimeSeriesTable({
 }: TimeSeriesTableProps) {
 	const [metric, setMetric] = useState<string>("PSR");
 	const [internalPeriod, setInternalPeriod] = useState<number>(6);
+	const [pitch, setPitch] = useState<Pitch>("weekly");
 
 	const metrics = ["PSR", "PER"];
 	const periods = [
-		{ label: "3ヶ月", value: 3, apiValue: "3mo" as const },
 		{ label: "6ヶ月", value: 6, apiValue: "6mo" as const },
 		{ label: "1年", value: 12, apiValue: "1y" as const },
+		{ label: "2年", value: 24, apiValue: "2y" as const },
+		{ label: "5年", value: 60, apiValue: "5y" as const },
+	];
+	const pitchOptions = [
+		{ label: "週次", value: "weekly" as Pitch },
+		{ label: "月次", value: "monthly" as Pitch },
+		{ label: "四半期", value: "quarterly" as Pitch },
+		{ label: "年次", value: "yearly" as Pitch },
 	];
 
 	const handlePeriodChange = (value: number) => {
@@ -64,27 +119,35 @@ export function TimeSeriesTable({
 	};
 
 	// 選択されたメトリクスのデータを持つ企業のみをフィルタ
-	const companiesWithData = useMemo(() => {
-		return companies.filter((company) => {
-			const companyData = historicalData?.[company.code];
-			if (!companyData || companyData.length === 0) {
-				return false;
-			}
+	const companiesWithData = companies.filter((company) => {
+		const companyData = historicalData?.[company.code];
+		if (!companyData || companyData.length === 0) {
+			return false;
+		}
 
-			// 少なくとも1つのデータポイントで選択されたメトリクスが有効かチェック
-			const hasValidData = companyData.some((point) => {
-				const value = metric === "PSR" ? point.psr : point.per;
-				return value !== undefined && value !== null && !Number.isNaN(value);
-			});
-
-			return hasValidData;
+		// 少なくとも1つのデータポイントで選択されたメトリクスが有効かチェック
+		const hasValidData = companyData.some((point) => {
+			const value = metric === "PSR" ? point.psr : point.per;
+			return value !== undefined && value !== null && !Number.isNaN(value);
 		});
-	}, [companies, historicalData, metric]);
+
+		return hasValidData;
+	});
 
 	// テーブルデータを生成
-	const tableData = useMemo(() => {
+	const tableData = (() => {
 		if (!historicalData || Object.keys(historicalData).length === 0) {
-			return { dates: [], rows: [], averageValues: [], caseAverageRows: [] };
+			return {
+				dates: [] as string[],
+				rows: [] as { company: CompanyRow; values: (number | null)[] }[],
+				averageValues: [] as (number | null)[],
+				caseAverageRows: [] as {
+					caseId: string;
+					caseName: string;
+					companyCount: number;
+					values: (number | null)[];
+				}[],
+			};
 		}
 
 		// 全企業の日付の和集合を取得
@@ -98,19 +161,34 @@ export function TimeSeriesTable({
 		// 日付順にソート
 		const sortedDates = Array.from(allDates).sort();
 
-		// 各企業の行データを作成
-		const rows = companiesWithData.map((company) => {
-			const companyData = historicalData[company.code] || [];
-			const values = sortedDates.map((date) => {
+		// ピッチに応じて日付をグループ化
+		const aggregatedGroups = aggregateByPitch(sortedDates, pitch);
+
+		// 企業ごとに、各期間の最終日の値を取得するヘルパー関数
+		const getValueForGroup = (
+			companyCode: string,
+			groupDates: string[],
+		): number | null => {
+			const companyData = historicalData[companyCode] || [];
+			// グループ内の最終日から順に有効な値を探す
+			for (let i = groupDates.length - 1; i >= 0; i--) {
+				const date = groupDates[i];
 				const dataPoint = companyData.find((p) => p.date === date);
 				if (dataPoint) {
 					const value = metric === "PSR" ? dataPoint.psr : dataPoint.per;
-					return value !== undefined && value !== null && !Number.isNaN(value)
-						? value
-						: null;
+					if (value !== undefined && value !== null && !Number.isNaN(value)) {
+						return value;
+					}
 				}
-				return null;
-			});
+			}
+			return null;
+		};
+
+		// 各企業の行データを作成
+		const rows = companiesWithData.map((company) => {
+			const values = aggregatedGroups.map((group) =>
+				getValueForGroup(company.code, group.dates),
+			);
 
 			return {
 				company,
@@ -119,9 +197,9 @@ export function TimeSeriesTable({
 		});
 
 		// 平均値の行を計算
-		const averageValues = sortedDates.map((_date, dateIndex) => {
+		const averageValues = aggregatedGroups.map((_group, groupIndex) => {
 			const validValues = rows
-				.map((row) => row.values[dateIndex])
+				.map((row) => row.values[groupIndex])
 				.filter((v): v is number => v !== null && !Number.isNaN(v));
 
 			if (validValues.length > 0) {
@@ -137,16 +215,12 @@ export function TimeSeriesTable({
 				(code) => historicalData[code] && historicalData[code].length > 0,
 			);
 
-			const values = sortedDates.map((date) => {
+			const values = aggregatedGroups.map((group) => {
 				const validValues: number[] = [];
 				for (const code of caseCompanyCodes) {
-					const companyData = historicalData[code];
-					const dataPoint = companyData?.find((p) => p.date === date);
-					if (dataPoint) {
-						const value = metric === "PSR" ? dataPoint.psr : dataPoint.per;
-						if (value !== undefined && value !== null && !Number.isNaN(value)) {
-							validValues.push(value);
-						}
+					const value = getValueForGroup(code, group.dates);
+					if (value !== null) {
+						validValues.push(value);
 					}
 				}
 				if (validValues.length > 0) {
@@ -165,17 +239,20 @@ export function TimeSeriesTable({
 			};
 		});
 
+		// 表示用の日付ラベル
+		const displayDates = aggregatedGroups.map((group) => group.key);
+
 		return {
-			dates: sortedDates,
+			dates: displayDates,
 			rows,
 			averageValues,
 			caseAverageRows,
 		};
-	}, [historicalData, companiesWithData, metric, selectedCases]);
+	})();
 
 	// テーブルをクリップボードにコピー
 	const handleCopy = () => {
-		const headers = ["企業", ...tableData.dates.map((d) => formatDate(d))];
+		const headers = ["企業", ...(tableData.dates ?? [])];
 		const dataRows = [
 			...tableData.rows.map((row) => [
 				`${row.company.name}(${row.company.code})`,
@@ -205,7 +282,7 @@ export function TimeSeriesTable({
 
 	// CSVダウンロード
 	const handleDownloadCSV = () => {
-		const headers = ["企業", ...tableData.dates.map((d) => formatDate(d))];
+		const headers = ["企業", ...(tableData.dates ?? [])];
 		const dataRows = [
 			...tableData.rows.map((row) => [
 				`${row.company.name}(${row.company.code})`,
@@ -240,7 +317,7 @@ export function TimeSeriesTable({
 	}
 
 	// データが無い場合
-	if (tableData.dates.length === 0) {
+	if (!tableData.dates || tableData.dates.length === 0) {
 		return (
 			<Card className="py-4">
 				<CardHeader>
@@ -285,6 +362,19 @@ export function TimeSeriesTable({
 								</Button>
 							))}
 						</div>
+						{/* ピッチ選択ボタン */}
+						<div className="flex gap-1 border-l pl-2 ml-1">
+							{pitchOptions.map((p) => (
+								<Button
+									key={p.value}
+									variant={pitch === p.value ? "default" : "outline"}
+									size="sm"
+									onClick={() => setPitch(p.value)}
+								>
+									{p.label}
+								</Button>
+							))}
+						</div>
 						<Button variant="outline" size="sm" onClick={handleCopy}>
 							<Copy className="h-4 w-4 mr-2" />
 							コピー
@@ -309,7 +399,7 @@ export function TimeSeriesTable({
 											key={date}
 											className="border px-3 py-2 text-right font-medium min-w-[100px]"
 										>
-											{formatDate(date)}
+											{pitch === "weekly" ? formatDate(date) : date}
 										</th>
 									))}
 								</tr>
@@ -349,12 +439,19 @@ export function TimeSeriesTable({
 										</td>
 									))}
 								</tr>
-								{/* ケース別平均行 */}
+								{/* ケース別平均行（10色対応） */}
 								{tableData.caseAverageRows.map((caseRow, caseIndex) => {
 									const colors = [
 										"bg-blue-50 dark:bg-blue-950",
 										"bg-green-50 dark:bg-green-950",
 										"bg-orange-50 dark:bg-orange-950",
+										"bg-purple-50 dark:bg-purple-950",
+										"bg-pink-50 dark:bg-pink-950",
+										"bg-teal-50 dark:bg-teal-950",
+										"bg-yellow-50 dark:bg-yellow-950",
+										"bg-indigo-50 dark:bg-indigo-950",
+										"bg-lime-50 dark:bg-lime-950",
+										"bg-rose-50 dark:bg-rose-950",
 									];
 									return (
 										<tr

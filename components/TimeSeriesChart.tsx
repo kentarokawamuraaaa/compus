@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import {
 	ChartTooltip,
 	ChartTooltipContent,
 } from "@/components/ui/chart";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 
 type CompanyRow = { code: string; name: string };
@@ -29,20 +30,48 @@ interface CaseData {
 	companyCodes: string[];
 }
 
+type PeriodType = "6mo" | "1y" | "2y" | "5y";
+
 interface TimeSeriesChartProps {
 	companies: CompanyRow[];
 	historicalData?: Record<string, HistoricalDataPoint[]>;
-	period?: "1mo" | "3mo" | "6mo" | "1y";
-	onPeriodChange?: (period: "1mo" | "3mo" | "6mo" | "1y") => void;
+	period?: PeriodType;
+	onPeriodChange?: (period: PeriodType) => void;
 	selectedCases?: CaseData[];
 }
 
-// 日付を表示用にフォーマット
-function formatDate(isoDate: string): string {
+// X軸ラベル用にフォーマット（期間に応じて形式を変更）
+function formatAxisLabel(isoDate: string, periodMonths: number): string {
 	const date = new Date(isoDate);
+	const year = date.getFullYear();
 	const month = date.getMonth() + 1;
-	const day = date.getDate();
-	return `${month}/${day}`;
+	const quarter = Math.floor(date.getMonth() / 3) + 1;
+
+	// 2年以上: YYYY/Q形式（四半期）
+	if (periodMonths >= 24) {
+		return `${year}/Q${quarter}`;
+	}
+	// 1年: YYYY/M形式（月）
+	if (periodMonths >= 12) {
+		return `${year}/${month}`;
+	}
+	// 6ヶ月: M月形式
+	return `${month}月`;
+}
+
+// 日付からグループキーを生成（期間に応じて月または四半期でグループ化）
+function getGroupKey(isoDate: string, periodMonths: number): string {
+	const date = new Date(isoDate);
+	const year = date.getFullYear();
+	const month = date.getMonth() + 1;
+	const quarter = Math.floor(date.getMonth() / 3) + 1;
+
+	// 2年以上: 四半期でグループ化
+	if (periodMonths >= 24) {
+		return `${year}-Q${quarter}`;
+	}
+	// それ以外: 月でグループ化
+	return `${year}-${String(month).padStart(2, "0")}`;
 }
 
 export function TimeSeriesChart({
@@ -57,12 +86,15 @@ export function TimeSeriesChart({
 	const [showIndividualLines, setShowIndividualLines] = useState<boolean>(true);
 	const [showAverageLine, setShowAverageLine] = useState<boolean>(true);
 	const [showCaseAverages, setShowCaseAverages] = useState<boolean>(true);
+	const [yAxisMin, setYAxisMin] = useState<string>("");
+	const [yAxisMax, setYAxisMax] = useState<string>("");
 
 	const metrics = ["PSR", "PER"];
 	const periods = [
-		{ label: "3ヶ月", value: 3, apiValue: "3mo" as const },
-		{ label: "6ヶ月", value: 6, apiValue: "6mo" as const },
-		{ label: "1年", value: 12, apiValue: "1y" as const },
+		{ label: "6ヶ月", value: 6, apiValue: "6mo" as PeriodType },
+		{ label: "1年", value: 12, apiValue: "1y" as PeriodType },
+		{ label: "2年", value: 24, apiValue: "2y" as PeriodType },
+		{ label: "5年", value: 60, apiValue: "5y" as PeriodType },
 	];
 
 	const handlePeriodChange = (value: number) => {
@@ -74,51 +106,24 @@ export function TimeSeriesChart({
 	};
 
 	// 選択されたメトリクスのデータを持つ企業のみをフィルタ
-	const companiesWithData = useMemo(() => {
-		console.log("[TimeSeriesChart] Filtering companies for metric:", metric);
-		console.log("[TimeSeriesChart] Total companies:", companies.length);
-		console.log(
-			"[TimeSeriesChart] Historical data keys:",
-			Object.keys(historicalData || {}),
-		);
+	const companiesWithData = companies.filter((company) => {
+		const companyData = historicalData?.[company.code];
+		if (!companyData || companyData.length === 0) {
+			return false;
+		}
 
-		const filtered = companies.filter((company) => {
-			const companyData = historicalData?.[company.code];
-			if (!companyData || companyData.length === 0) {
-				console.log(`[TimeSeriesChart] ${company.code}: No data`);
-				return false;
-			}
-
-			// 少なくとも1つのデータポイントで選択されたメトリクスが有効かチェック
-			const hasValidData = companyData.some((point) => {
-				const value = metric === "PSR" ? point.psr : point.per;
-				return value !== undefined && value !== null && !Number.isNaN(value);
-			});
-
-			console.log(
-				`[TimeSeriesChart] ${company.code}: hasValidData=${hasValidData}`,
-			);
-			return hasValidData;
+		// 少なくとも1つのデータポイントで選択されたメトリクスが有効かチェック
+		const hasValidData = companyData.some((point) => {
+			const value = metric === "PSR" ? point.psr : point.per;
+			return value !== undefined && value !== null && !Number.isNaN(value);
 		});
 
-		console.log(
-			"[TimeSeriesChart] Filtered companies:",
-			filtered.map((c) => c.code),
-		);
-		return filtered;
-	}, [companies, historicalData, metric]);
+		return hasValidData;
+	});
 
 	// 実データからchartDataを生成
-	const chartData = useMemo(() => {
-		console.log("[TimeSeriesChart] Generating chartData");
-		console.log(
-			"[TimeSeriesChart] companiesWithData:",
-			companiesWithData.map((c) => c.code),
-		);
-		console.log("[TimeSeriesChart] selectedCases:", selectedCases.length);
-
+	const chartData = (() => {
 		if (!historicalData || Object.keys(historicalData).length === 0) {
-			console.log("[TimeSeriesChart] No historical data");
 			return [];
 		}
 
@@ -132,12 +137,13 @@ export function TimeSeriesChart({
 
 		// 日付順にソート
 		const sortedDates = Array.from(allDates).sort();
-		console.log("[TimeSeriesChart] Total dates:", sortedDates.length);
 
-		// 各日付のデータポイントを作成
+		// 各日付のデータポイントを作成（グループキーとラベルも追加）
 		const data = sortedDates.map((date) => {
 			const point: Record<string, number | string> = {
-				date: formatDate(date),
+				date: date, // 元のISO日付を保持
+				groupKey: getGroupKey(date, internalPeriod),
+				axisLabel: formatAxisLabel(date, internalPeriod),
 			};
 
 			// データを持つ企業のみのメトリクス値を追加
@@ -154,17 +160,18 @@ export function TimeSeriesChart({
 				}
 			}
 
-			// 全体の平均値を計算（有効な値を持つ企業のみ）
+			// 全体の平均値を計算（有効データが2社以上の場合のみ）
 			const values = companiesWithData
 				.map((c) => point[c.code])
 				.filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
 
-			if (values.length > 0) {
+			// 2社以上の場合のみ平均を計算（1社以下はデータ不足としてnull）
+			if (values.length >= 2) {
 				const average = values.reduce((sum, v) => sum + v, 0) / values.length;
 				point.平均 = Number(average.toFixed(2));
 			}
 
-			// 各ケースの平均値を計算
+			// 各ケースの平均値を計算（同様に2社以上の場合のみ）
 			for (const caseData of selectedCases) {
 				const caseKey = `ケース_${caseData.caseName}`;
 				// このケースに含まれる企業で、historicalDataとcompaniesWithDataの両方に存在する企業のみを対象
@@ -189,7 +196,8 @@ export function TimeSeriesChart({
 							v !== undefined && v !== null && !Number.isNaN(v),
 					);
 
-				if (caseValues.length > 0) {
+				// 2社以上の場合のみケース平均を計算
+				if (caseValues.length >= 2) {
 					const caseAverage =
 						caseValues.reduce((sum, v) => sum + v, 0) / caseValues.length;
 					point[caseKey] = Number(caseAverage.toFixed(2));
@@ -199,16 +207,8 @@ export function TimeSeriesChart({
 			return point;
 		});
 
-		console.log(
-			"[TimeSeriesChart] Sample chartData (first 3 points):",
-			data.slice(0, 3),
-		);
-		console.log(
-			"[TimeSeriesChart] Chart has 平均 values:",
-			data.filter((p) => p.平均 !== undefined).length,
-		);
 		return data;
-	}, [historicalData, companiesWithData, metric, selectedCases]);
+	})();
 
 	const chartConfig: ChartConfig = {};
 	companiesWithData.forEach((company, index) => {
@@ -224,8 +224,19 @@ export function TimeSeriesChart({
 		color: "#ef4444",
 	};
 
-	// 各ケースの平均値の設定を追加
-	const caseColors = ["#3b82f6", "#10b981", "#f59e0b"];
+	// 各ケースの平均値の設定を追加（10色対応）
+	const caseColors = [
+		"#3b82f6", // blue
+		"#22c55e", // green
+		"#f97316", // orange
+		"#a855f7", // purple
+		"#ec4899", // pink
+		"#14b8a6", // teal
+		"#eab308", // yellow
+		"#6366f1", // indigo
+		"#84cc16", // lime
+		"#f43f5e", // rose
+	];
 	selectedCases.forEach((caseData, index) => {
 		const caseKey = `ケース_${caseData.caseName}`;
 		chartConfig[caseKey] = {
@@ -233,9 +244,6 @@ export function TimeSeriesChart({
 			color: caseColors[index % caseColors.length],
 		};
 	});
-
-	console.log("[TimeSeriesChart] chartConfig keys:", Object.keys(chartConfig));
-	console.log("[TimeSeriesChart] showAverageLine:", showAverageLine);
 
 	if (companies.length === 0) {
 		return null;
@@ -325,12 +333,31 @@ export function TimeSeriesChart({
 							</label>
 						</div>
 					)}
+					{/* Y軸スケール調整 */}
+					<div className="flex items-center gap-2 border-l pl-3 ml-2">
+						<span className="text-sm text-muted-foreground">Y軸:</span>
+						<Input
+							type="number"
+							placeholder="自動"
+							value={yAxisMin}
+							onChange={(e) => setYAxisMin(e.target.value)}
+							className="w-16 h-7 text-xs"
+						/>
+						<span className="text-muted-foreground">〜</span>
+						<Input
+							type="number"
+							placeholder="自動"
+							value={yAxisMax}
+							onChange={(e) => setYAxisMax(e.target.value)}
+							className="w-16 h-7 text-xs"
+						/>
+					</div>
 				</div>
 			</CardHeader>
 			<CardContent className="px-2 sm:p-6">
 				<ChartContainer
 					config={chartConfig}
-					className="aspect-auto h-[250px] w-full"
+					className="aspect-auto h-[500px] w-full"
 				>
 					<LineChart
 						accessibilityLayer
@@ -346,9 +373,36 @@ export function TimeSeriesChart({
 							tickLine={false}
 							axisLine={false}
 							tickMargin={8}
+							tickFormatter={(_value, index) => {
+								// グループ（月または四半期）の最初のデータポイントでのみラベルを表示
+								const currentPoint = chartData[index];
+								if (!currentPoint) return "";
+								const prevPoint = index > 0 ? chartData[index - 1] : null;
+								// 前のポイントとグループが異なる場合のみラベルを表示
+								if (
+									!prevPoint ||
+									currentPoint.groupKey !== prevPoint.groupKey
+								) {
+									return currentPoint.axisLabel as string;
+								}
+								return "";
+							}}
+							interval={0}
 						/>
-						<YAxis tickLine={false} axisLine={false} tickMargin={8} />
-						<ChartTooltip content={<ChartTooltipContent />} />
+						<YAxis
+							tickLine={false}
+							axisLine={false}
+							tickMargin={8}
+							domain={[
+								yAxisMin !== "" && !Number.isNaN(Number(yAxisMin))
+									? Number(yAxisMin)
+									: "auto",
+								yAxisMax !== "" && !Number.isNaN(Number(yAxisMax))
+									? Number(yAxisMax)
+									: "auto",
+							]}
+						/>
+						<ChartTooltip content={<ChartTooltipContent hideLabel />} />
 						<ChartLegend content={<ChartLegendContent />} />
 						{showIndividualLines &&
 							companiesWithData.map((company) => (
@@ -370,6 +424,7 @@ export function TimeSeriesChart({
 								strokeWidth={3}
 								dot={false}
 								strokeDasharray="5 5"
+								connectNulls={false}
 							/>
 						)}
 						{showCaseAverages &&
@@ -383,6 +438,7 @@ export function TimeSeriesChart({
 										stroke={`var(--color-${caseKey})`}
 										strokeWidth={3}
 										dot={false}
+										connectNulls={false}
 									/>
 								);
 							})}

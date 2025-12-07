@@ -1,4 +1,5 @@
 "use client";
+
 import { useAction, useMutation, useQuery } from "convex/react";
 import debounce from "lodash.debounce";
 import {
@@ -80,7 +81,7 @@ export default function Home() {
 	>("chart");
 
 	// Historical data state
-	const [chartPeriod, setChartPeriod] = useState<"1mo" | "3mo" | "6mo" | "1y">(
+	const [chartPeriod, setChartPeriod] = useState<"6mo" | "1y" | "2y" | "5y">(
 		"6mo",
 	);
 	const [historicalData, setHistoricalData] = useState<
@@ -457,9 +458,9 @@ export default function Home() {
 			if (newSet.has(caseId)) {
 				newSet.delete(caseId);
 			} else {
-				// 最大3ケースまで選択可能
-				if (newSet.size >= 3) {
-					alert("最大3ケースまで同時に選択できます");
+				// 最大10ケースまで選択可能
+				if (newSet.size >= 10) {
+					alert("最大10ケースまで同時に選択できます");
 					return prev;
 				}
 				newSet.add(caseId);
@@ -484,7 +485,7 @@ export default function Home() {
 	};
 
 	// 履歴データ取得ハンドラー（タブ内の全企業データを取得）
-	const fetchHistoricalData = async (period: "1mo" | "3mo" | "6mo" | "1y") => {
+	const fetchHistoricalData = async (period: "6mo" | "1y" | "2y" | "5y") => {
 		if (!activeTabId || !tabCompanies) {
 			return;
 		}
@@ -553,7 +554,7 @@ export default function Home() {
 	};
 
 	// 期間変更ハンドラー
-	const handleChartPeriodChange = (period: "1mo" | "3mo" | "6mo" | "1y") => {
+	const handleChartPeriodChange = (period: "6mo" | "1y" | "2y" | "5y") => {
 		setChartPeriod(period);
 		fetchHistoricalData(period);
 	};
@@ -612,7 +613,7 @@ export default function Home() {
 								<CardHeader>
 									<CardTitle>保存済みケース</CardTitle>
 									<CardDescription>
-										チェックボックスで複数ケース（最大3つ）を選択すると、グラフとテーブルで比較できます
+										チェックボックスで複数ケース（最大10個）を選択すると、グラフとテーブルで比較できます
 									</CardDescription>
 									<CardAction>
 										<Button
