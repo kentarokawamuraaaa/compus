@@ -1,18 +1,18 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+	type ChartConfig,
 	ChartContainer,
-	ChartTooltip,
-	ChartTooltipContent,
 	ChartLegend,
 	ChartLegendContent,
-	type ChartConfig,
+	ChartTooltip,
+	ChartTooltipContent,
 } from "@/components/ui/chart";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
+import { Switch } from "@/components/ui/switch";
 
 type CompanyRow = { code: string; name: string };
 
@@ -48,7 +48,7 @@ function formatDate(isoDate: string): string {
 export function TimeSeriesChart({
 	companies,
 	historicalData,
-	period: externalPeriod,
+	period: _externalPeriod,
 	onPeriodChange,
 	selectedCases = [],
 }: TimeSeriesChartProps) {
@@ -77,7 +77,10 @@ export function TimeSeriesChart({
 	const companiesWithData = useMemo(() => {
 		console.log("[TimeSeriesChart] Filtering companies for metric:", metric);
 		console.log("[TimeSeriesChart] Total companies:", companies.length);
-		console.log("[TimeSeriesChart] Historical data keys:", Object.keys(historicalData || {}));
+		console.log(
+			"[TimeSeriesChart] Historical data keys:",
+			Object.keys(historicalData || {}),
+		);
 
 		const filtered = companies.filter((company) => {
 			const companyData = historicalData?.[company.code];
@@ -92,18 +95,26 @@ export function TimeSeriesChart({
 				return value !== undefined && value !== null && !Number.isNaN(value);
 			});
 
-			console.log(`[TimeSeriesChart] ${company.code}: hasValidData=${hasValidData}`);
+			console.log(
+				`[TimeSeriesChart] ${company.code}: hasValidData=${hasValidData}`,
+			);
 			return hasValidData;
 		});
 
-		console.log("[TimeSeriesChart] Filtered companies:", filtered.map(c => c.code));
+		console.log(
+			"[TimeSeriesChart] Filtered companies:",
+			filtered.map((c) => c.code),
+		);
 		return filtered;
 	}, [companies, historicalData, metric]);
 
 	// 実データからchartDataを生成
 	const chartData = useMemo(() => {
 		console.log("[TimeSeriesChart] Generating chartData");
-		console.log("[TimeSeriesChart] companiesWithData:", companiesWithData.map(c => c.code));
+		console.log(
+			"[TimeSeriesChart] companiesWithData:",
+			companiesWithData.map((c) => c.code),
+		);
 		console.log("[TimeSeriesChart] selectedCases:", selectedCases.length);
 
 		if (!historicalData || Object.keys(historicalData).length === 0) {
@@ -188,8 +199,14 @@ export function TimeSeriesChart({
 			return point;
 		});
 
-		console.log("[TimeSeriesChart] Sample chartData (first 3 points):", data.slice(0, 3));
-		console.log("[TimeSeriesChart] Chart has 平均 values:", data.filter(p => p.平均 !== undefined).length);
+		console.log(
+			"[TimeSeriesChart] Sample chartData (first 3 points):",
+			data.slice(0, 3),
+		);
+		console.log(
+			"[TimeSeriesChart] Chart has 平均 values:",
+			data.filter((p) => p.平均 !== undefined).length,
+		);
 		return data;
 	}, [historicalData, companiesWithData, metric, selectedCases]);
 
@@ -330,11 +347,7 @@ export function TimeSeriesChart({
 							axisLine={false}
 							tickMargin={8}
 						/>
-						<YAxis
-							tickLine={false}
-							axisLine={false}
-							tickMargin={8}
-						/>
+						<YAxis tickLine={false} axisLine={false} tickMargin={8} />
 						<ChartTooltip content={<ChartTooltipContent />} />
 						<ChartLegend content={<ChartLegendContent />} />
 						{showIndividualLines &&

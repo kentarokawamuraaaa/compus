@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Copy } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 type CompanyRow = { code: string; name: string };
 
@@ -41,7 +41,7 @@ function formatDate(isoDate: string): string {
 export function TimeSeriesTable({
 	companies,
 	historicalData,
-	period: externalPeriod,
+	period: _externalPeriod,
 	onPeriodChange,
 	selectedCases,
 }: TimeSeriesTableProps) {
@@ -119,7 +119,7 @@ export function TimeSeriesTable({
 		});
 
 		// 平均値の行を計算
-		const averageValues = sortedDates.map((date, dateIndex) => {
+		const averageValues = sortedDates.map((_date, dateIndex) => {
 			const validValues = rows
 				.map((row) => row.values[dateIndex])
 				.filter((v): v is number => v !== null && !Number.isNaN(v));
@@ -134,7 +134,7 @@ export function TimeSeriesTable({
 		const caseAverageRows = (selectedCases ?? []).map((caseData) => {
 			// このケースに含まれる企業でhistoricalDataがある企業コード
 			const caseCompanyCodes = caseData.companyCodes.filter(
-				(code) => historicalData[code] && historicalData[code].length > 0
+				(code) => historicalData[code] && historicalData[code].length > 0,
 			);
 
 			const values = sortedDates.map((date) => {
@@ -150,7 +150,9 @@ export function TimeSeriesTable({
 					}
 				}
 				if (validValues.length > 0) {
-					return validValues.reduce((sum, v) => sum + v, 0) / validValues.length;
+					return (
+						validValues.reduce((sum, v) => sum + v, 0) / validValues.length
+					);
 				}
 				return null;
 			});
@@ -173,10 +175,7 @@ export function TimeSeriesTable({
 
 	// テーブルをクリップボードにコピー
 	const handleCopy = () => {
-		const headers = [
-			"企業",
-			...tableData.dates.map((d) => formatDate(d)),
-		];
+		const headers = ["企業", ...tableData.dates.map((d) => formatDate(d))];
 		const dataRows = [
 			...tableData.rows.map((row) => [
 				`${row.company.name}(${row.company.code})`,
@@ -184,7 +183,9 @@ export function TimeSeriesTable({
 			]),
 			[
 				"平均",
-				...tableData.averageValues.map((v) => (v !== null ? v.toFixed(2) : "N/A")),
+				...tableData.averageValues.map((v) =>
+					v !== null ? v.toFixed(2) : "N/A",
+				),
 			],
 			...tableData.caseAverageRows.map((caseRow) => [
 				`${caseRow.caseName}(${caseRow.companyCount}社)`,
@@ -193,9 +194,10 @@ export function TimeSeriesTable({
 		];
 
 		// TSV形式で作成（Excelに貼り付けやすい）
-		const tsv = [headers.join("\t"), ...dataRows.map((row) => row.join("\t"))].join(
-			"\n",
-		);
+		const tsv = [
+			headers.join("\t"),
+			...dataRows.map((row) => row.join("\t")),
+		].join("\n");
 
 		navigator.clipboard.writeText(tsv);
 		alert("テーブルをクリップボードにコピーしました");
@@ -203,10 +205,7 @@ export function TimeSeriesTable({
 
 	// CSVダウンロード
 	const handleDownloadCSV = () => {
-		const headers = [
-			"企業",
-			...tableData.dates.map((d) => formatDate(d)),
-		];
+		const headers = ["企業", ...tableData.dates.map((d) => formatDate(d))];
 		const dataRows = [
 			...tableData.rows.map((row) => [
 				`${row.company.name}(${row.company.code})`,
@@ -214,7 +213,9 @@ export function TimeSeriesTable({
 			]),
 			[
 				"平均",
-				...tableData.averageValues.map((v) => (v !== null ? v.toFixed(2) : "N/A")),
+				...tableData.averageValues.map((v) =>
+					v !== null ? v.toFixed(2) : "N/A",
+				),
 			],
 			...tableData.caseAverageRows.map((caseRow) => [
 				`${caseRow.caseName}(${caseRow.companyCount}社)`,
@@ -222,9 +223,10 @@ export function TimeSeriesTable({
 			]),
 		];
 
-		const csv = [headers.join(","), ...dataRows.map((row) => row.join(","))].join(
-			"\n",
-		);
+		const csv = [
+			headers.join(","),
+			...dataRows.map((row) => row.join(",")),
+		].join("\n");
 
 		const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
 		const link = document.createElement("a");

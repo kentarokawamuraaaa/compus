@@ -6,7 +6,8 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"ignoreUnknown": false
+		"ignoreUnknown": false,
+		"includes": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json"]
 	},
 	"formatter": {
 		"enabled": true,
@@ -15,12 +16,30 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true
+			"recommended": true,
+			"suspicious": {
+				"noDocumentCookie": "off",
+				"noExplicitAny": "off"
+			},
+			"security": {
+				"noDangerouslySetInnerHtml": "off"
+			}
 		}
 	},
 	"javascript": {
 		"formatter": {
 			"quoteStyle": "double"
+		}
+	},
+	"css": {
+		"parser": {
+			"cssModules": true
+		},
+		"linter": {
+			"enabled": false
+		},
+		"formatter": {
+			"enabled": false
 		}
 	},
 	"assist": {
@@ -30,5 +49,19 @@
 				"organizeImports": "on"
 			}
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["convex/_generated/**"],
+			"linter": {
+				"enabled": false
+			}
+		},
+		{
+			"includes": ["types/*.d.ts"],
+			"linter": {
+				"enabled": false
+			}
+		}
+	]
 }

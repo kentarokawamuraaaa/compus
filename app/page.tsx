@@ -1,25 +1,16 @@
 "use client";
+import { useAction, useMutation, useQuery } from "convex/react";
 import debounce from "lodash.debounce";
-import { useEffect, useState } from "react";
-import { useQuery, useMutation, useAction } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import {
-	Card,
-	CardContent,
-	CardHeader,
-	CardTitle,
-	CardAction,
-	CardDescription,
-} from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Switch } from "@/components/ui/switch";
-import { Spinner } from "@/components/ui/spinner";
-import { Checkbox } from "@/components/ui/checkbox";
+	BarChart3,
+	ChevronDown,
+	ChevronUp,
+	FileText,
+	Plus,
+	Settings,
+	Trash2,
+} from "lucide-react";
+import { useEffect, useState } from "react";
 import { TimeSeriesChart } from "@/components/TimeSeriesChart";
 import { TimeSeriesTable } from "@/components/TimeSeriesTable";
 import {
@@ -28,22 +19,31 @@ import {
 	AccordionItem,
 	AccordionTrigger,
 } from "@/components/ui/accordion";
+import { Button } from "@/components/ui/button";
 import {
-	Settings,
-	Plus,
-	BarChart3,
-	FileText,
-	ChevronDown,
-	ChevronUp,
-	Trash2,
-} from "lucide-react";
+	Card,
+	CardAction,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-	DialogFooter,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 
 type CompanyRow = { code: string; name: string };
 
@@ -123,7 +123,7 @@ export default function Home() {
 	const removeCompanyFromTab = useMutation(
 		api.tabCompanies.removeCompanyFromTab,
 	);
-	const toggleCompanyEnabled = useMutation(
+	const _toggleCompanyEnabled = useMutation(
 		api.tabCompanies.toggleCompanyEnabled,
 	);
 	const updateCompanyData = useMutation(api.tabCompanies.updateCompanyData);
@@ -135,8 +135,8 @@ export default function Home() {
 	);
 	const createCase = useMutation(api.cases.create);
 	const deleteCase = useMutation(api.cases.deleteCase);
-	const renameCase = useMutation(api.cases.rename);
-	const duplicateCase = useMutation(api.cases.duplicate);
+	const _renameCase = useMutation(api.cases.rename);
+	const _duplicateCase = useMutation(api.cases.duplicate);
 	const setActiveCase = useMutation(api.cases.setActiveCase);
 	const updateCompanyInCase = useMutation(api.cases.updateCompanyInCase);
 
@@ -160,6 +160,7 @@ export default function Home() {
 	}, [cases, activeCaseId]);
 
 	// タブが変更されたら全企業のデータを自動取得
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fetchHistoricalData depends on these same values
 	useEffect(() => {
 		if (activeTabId && tabCompanies) {
 			fetchHistoricalData(chartPeriod);

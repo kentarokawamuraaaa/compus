@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query, internalMutation } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 
 const CACHE_DURATION_MS = 24 * 60 * 60 * 1000; // 24時間
 
@@ -23,7 +23,7 @@ export const save = internalMutation({
 				q
 					.eq("companyCode", args.companyCode)
 					.eq("period", args.period)
-					.eq("interval", args.interval)
+					.eq("interval", args.interval),
 			)
 			.first();
 
@@ -68,7 +68,7 @@ export const get = query({
 				q
 					.eq("companyCode", args.companyCode)
 					.eq("period", args.period)
-					.eq("interval", args.interval)
+					.eq("interval", args.interval),
 			)
 			.first();
 
@@ -89,13 +89,29 @@ export const getMultiple = query({
 	},
 	handler: async (ctx, args) => {
 		const now = Date.now();
-		const results: Record<string, any> = {};
+		const results: Record<
+			string,
+			{
+				_id: string;
+				companyCode: string;
+				yahooSymbol: string;
+				period: string;
+				interval: string;
+				data: unknown[];
+				currentMetrics: Record<string, unknown>;
+				fetchedAt: number;
+				expiresAt: number;
+			}
+		> = {};
 
 		for (const code of args.companyCodes) {
 			const data = await ctx.db
 				.query("historicalData")
 				.withIndex("by_company_period", (q) =>
-					q.eq("companyCode", code).eq("period", args.period).eq("interval", args.interval)
+					q
+						.eq("companyCode", code)
+						.eq("period", args.period)
+						.eq("interval", args.interval),
 				)
 				.first();
 

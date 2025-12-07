@@ -1,9 +1,9 @@
 "use node";
 
 import { v } from "convex/values";
-import { action } from "./_generated/server";
-import { internal } from "./_generated/api";
 import YahooFinance from "yahoo-finance2";
+import { internal } from "./_generated/api";
+import { action } from "./_generated/server";
 
 // YahooFinanceインスタンスを作成
 const yahooFinance = new YahooFinance();
@@ -26,15 +26,15 @@ export const fetchHistoricalData = action({
 			v.literal("6mo"),
 			v.literal("1y"),
 			v.literal("2y"),
-			v.literal("5y")
+			v.literal("5y"),
 		),
 		interval: v.optional(
-			v.union(v.literal("1d"), v.literal("1wk"), v.literal("1mo"))
+			v.union(v.literal("1d"), v.literal("1wk"), v.literal("1mo")),
 		),
 	},
 	handler: async (ctx, args) => {
 		console.log(
-			`[fetchHistoricalData] Starting fetch for ${args.symbols.length} symbols, period: ${args.period}`
+			`[fetchHistoricalData] Starting fetch for ${args.symbols.length} symbols, period: ${args.period}`,
 		);
 
 		const { symbols, period, interval = "1wk" } = args;
@@ -96,23 +96,23 @@ export const fetchHistoricalData = action({
 
 				console.log(
 					`[fetchHistoricalData] Query options for ${symbol}:`,
-					queryOptions
+					queryOptions,
 				);
 
 				// chart()を使用 (historical()は非推奨)
 				const chartResult = await yahooFinance.chart(symbol, queryOptions);
 
-				console.log(
-					`[fetchHistoricalData] Chart result for ${symbol}:`,
-					{
-						hasQuotes: !!chartResult.quotes,
-						quotesLength: chartResult.quotes?.length || 0,
-					}
-				);
+				console.log(`[fetchHistoricalData] Chart result for ${symbol}:`, {
+					hasQuotes: !!chartResult.quotes,
+					quotesLength: chartResult.quotes?.length || 0,
+				});
 
 				// chart()の結果を変換 (closeがnullの場合はフィルタで除外)
 				const priceHistory: HistoricalPoint[] = (chartResult.quotes || [])
-					.filter((quote): quote is typeof quote & { close: number } => quote.close !== null && quote.close !== undefined)
+					.filter(
+						(quote): quote is typeof quote & { close: number } =>
+							quote.close !== null && quote.close !== undefined,
+					)
 					.map((quote) => ({
 						date: new Date(quote.date),
 						close: quote.close,
@@ -123,7 +123,7 @@ export const fetchHistoricalData = action({
 					}));
 
 				console.log(
-					`[fetchHistoricalData] Got ${priceHistory.length} historical points for ${symbol}`
+					`[fetchHistoricalData] Got ${priceHistory.length} historical points for ${symbol}`,
 				);
 
 				// quoteSummaryで財務指標を取得
@@ -145,41 +145,40 @@ export const fetchHistoricalData = action({
 					};
 				};
 
-				console.log(
-					`[fetchHistoricalData] Got quote summary for ${symbol}`,
-					{
-						hasMarketCap: !!quote.summaryDetail?.marketCap,
-						hasRevenue: !!quote.financialData?.totalRevenue,
-						hasPE: !!quote.summaryDetail?.trailingPE,
-						hasShares: !!quote.defaultKeyStatistics?.sharesOutstanding,
-						trailingPE: quote.summaryDetail?.trailingPE,
-					}
-				);
+				console.log(`[fetchHistoricalData] Got quote summary for ${symbol}`, {
+					hasMarketCap: !!quote.summaryDetail?.marketCap,
+					hasRevenue: !!quote.financialData?.totalRevenue,
+					hasPE: !!quote.summaryDetail?.trailingPE,
+					hasShares: !!quote.defaultKeyStatistics?.sharesOutstanding,
+					trailingPE: quote.summaryDetail?.trailingPE,
+				});
 
 				// 財務データ
 				const currentMarketCap = quote.summaryDetail?.marketCap ?? null;
 				const revenue = quote.financialData?.totalRevenue ?? null;
-				const currentPSR = currentMarketCap && revenue ? currentMarketCap / revenue : null;
-				const sharesOutstanding = quote.defaultKeyStatistics?.sharesOutstanding ?? null;
+				const currentPSR =
+					currentMarketCap && revenue ? currentMarketCap / revenue : null;
+				const sharesOutstanding =
+					quote.defaultKeyStatistics?.sharesOutstanding ?? null;
 				const trailingPE = quote.summaryDetail?.trailingPE ?? null;
 
 				// 最新株価を事前に取得
-				const latestPrice = priceHistory.length > 0 ? priceHistory[priceHistory.length - 1].close : 0;
+				const latestPrice =
+					priceHistory.length > 0
+						? priceHistory[priceHistory.length - 1].close
+						: 0;
 
-				console.log(
-					`[fetchHistoricalData] PER calculation for ${symbol}:`,
-					{
-						trailingPE,
-						latestPrice,
-						historyLength: priceHistory.length,
-					}
-				);
+				console.log(`[fetchHistoricalData] PER calculation for ${symbol}:`, {
+					trailingPE,
+					latestPrice,
+					historyLength: priceHistory.length,
+				});
 
 				// PSRとPERの時系列を計算
 				const history = priceHistory.map((point) => {
-					let psr: number | undefined = undefined;
-					let per: number | undefined = undefined;
-					let marketCap: number | undefined = undefined;
+					let psr: number | undefined;
+					let per: number | undefined;
+					let marketCap: number | undefined;
 
 					// PSR計算: (株価 × 発行株数) / 売上高
 					if (sharesOutstanding && revenue && point.close > 0) {
@@ -188,7 +187,12 @@ export const fetchHistoricalData = action({
 					}
 
 					// PER計算: (その時点の株価 / 最新株価) × 最新PER
-					if (trailingPE && trailingPE > 0 && latestPrice > 0 && point.close > 0) {
+					if (
+						trailingPE &&
+						trailingPE > 0 &&
+						latestPrice > 0 &&
+						point.close > 0
+					) {
 						per = (point.close / latestPrice) * trailingPE;
 					}
 
@@ -209,10 +213,12 @@ export const fetchHistoricalData = action({
 					`[fetchHistoricalData] Calculated time series metrics for ${symbol}:`,
 					{
 						totalPoints: history.length,
-						pointsWithPSR: history.filter(h => h.psr !== undefined).length,
-						pointsWithPER: history.filter(h => h.per !== undefined).length,
-						samplePER: history.slice(-3).map(h => ({ date: h.date, per: h.per })),
-					}
+						pointsWithPSR: history.filter((h) => h.psr !== undefined).length,
+						pointsWithPER: history.filter((h) => h.per !== undefined).length,
+						samplePER: history
+							.slice(-3)
+							.map((h) => ({ date: h.date, per: h.per })),
+					},
 				);
 
 				results[originalSymbol] = {
@@ -242,7 +248,9 @@ export const fetchHistoricalData = action({
 					period,
 					interval,
 					data: JSON.stringify(results[originalSymbol].history),
-					currentMetrics: JSON.stringify(results[originalSymbol].currentMetrics),
+					currentMetrics: JSON.stringify(
+						results[originalSymbol].currentMetrics,
+					),
 				});
 
 				console.log(`[fetchHistoricalData] Saved to Convex: ${originalSymbol}`);
@@ -251,14 +259,14 @@ export const fetchHistoricalData = action({
 					error instanceof Error ? error.message : "Unknown error";
 				console.error(
 					`[fetchHistoricalData] Error fetching data for ${symbol}:`,
-					errorMessage
+					errorMessage,
 				);
 				console.error("[fetchHistoricalData] Full error:", error);
 			}
 		}
 
 		console.log(
-			`[fetchHistoricalData] Completed. Successfully fetched ${Object.keys(results).length} out of ${symbols.length} symbols`
+			`[fetchHistoricalData] Completed. Successfully fetched ${Object.keys(results).length} out of ${symbols.length} symbols`,
 		);
 
 		return {

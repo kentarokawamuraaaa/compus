@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 		if (!symbols || symbols.length === 0) {
 			return NextResponse.json(
 				{ error: "シンボルが指定されていません" },
-				{ status: 400 }
+				{ status: 400 },
 			);
 		}
 
@@ -40,27 +40,31 @@ export async function POST(req: NextRequest) {
 			return symbol;
 		});
 
-		const results: Record<string, {
-			symbol: string;
-			yahooSymbol: string;
-			history: Array<{
-				date: string;
-				close: number;
-				high: number;
-				low: number;
-				open: number;
-				volume: number;
-			}>;
-			currentMetrics: {
-				per: number | null;
-				psr: number | null;
-				roe: number | null;
-				marketCap: number | null;
-				revenue: number | null;
-				dividendYield: number | null;
-				priceToBook: number | null;
-			};
-		} | { symbol: string; error: string }> = {};
+		const results: Record<
+			string,
+			| {
+					symbol: string;
+					yahooSymbol: string;
+					history: Array<{
+						date: string;
+						close: number;
+						high: number;
+						low: number;
+						open: number;
+						volume: number;
+					}>;
+					currentMetrics: {
+						per: number | null;
+						psr: number | null;
+						roe: number | null;
+						marketCap: number | null;
+						revenue: number | null;
+						dividendYield: number | null;
+						priceToBook: number | null;
+					};
+			  }
+			| { symbol: string; error: string }
+		> = {};
 
 		// 各シンボルの履歴データを取得
 		for (const symbol of yahooSymbols) {
@@ -69,15 +73,25 @@ export async function POST(req: NextRequest) {
 
 				// 履歴データ取得
 				const queryOptions = { period1: getPeriodStartDate(period), interval };
-				const history = (await yahooFinance.historical(symbol, queryOptions)) as HistoricalPoint[];
+				const history = (await yahooFinance.historical(
+					symbol,
+					queryOptions,
+				)) as HistoricalPoint[];
 
 				// quoteSummaryで現在の財務指標を取得
-				const quote = await yahooFinance.quoteSummary(symbol, {
+				const quote = (await yahooFinance.quoteSummary(symbol, {
 					modules: ["defaultKeyStatistics", "summaryDetail", "financialData"],
-				}) as {
-					summaryDetail?: { marketCap?: number; trailingPE?: number; dividendYield?: { raw?: number } };
+				})) as {
+					summaryDetail?: {
+						marketCap?: number;
+						trailingPE?: number;
+						dividendYield?: { raw?: number };
+					};
 					financialData?: { totalRevenue?: number };
-					defaultKeyStatistics?: { returnOnEquity?: { raw?: number }; priceToBook?: number };
+					defaultKeyStatistics?: {
+						returnOnEquity?: { raw?: number };
+						priceToBook?: number;
+					};
 				};
 
 				// PSR計算用のデータ
@@ -110,7 +124,8 @@ export async function POST(req: NextRequest) {
 					},
 				};
 			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : "Unknown error";
+				const errorMessage =
+					error instanceof Error ? error.message : "Unknown error";
 				console.error(`Error fetching data for ${symbol}:`, errorMessage);
 				results[symbol.replace(".T", "")] = {
 					symbol: symbol.replace(".T", ""),
@@ -126,12 +141,10 @@ export async function POST(req: NextRequest) {
 			data: results,
 		});
 	} catch (error) {
-		const errorMessage = error instanceof Error ? error.message : "データの取得に失敗しました";
+		const errorMessage =
+			error instanceof Error ? error.message : "データの取得に失敗しました";
 		console.error("Historical API error:", error);
-		return NextResponse.json(
-			{ error: errorMessage },
-			{ status: 500 }
-		);
+		return NextResponse.json({ error: errorMessage }, { status: 500 });
 	}
 }
 

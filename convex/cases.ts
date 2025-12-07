@@ -1,6 +1,5 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { Id } from "./_generated/dataModel";
 
 export const create = mutation({
 	args: {
@@ -232,7 +231,7 @@ export const updateCompanyInCase = mutation({
 		const company = await ctx.db
 			.query("tabCompanies")
 			.withIndex("by_tab_company", (q) =>
-				q.eq("tabId", caseDoc.tabId).eq("companyCode", args.companyCode)
+				q.eq("tabId", caseDoc.tabId).eq("companyCode", args.companyCode),
 			)
 			.first();
 
