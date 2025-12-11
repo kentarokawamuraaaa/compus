@@ -373,9 +373,15 @@ export function TimeSeriesChart({
 							tickLine={false}
 							axisLine={false}
 							tickMargin={8}
-							tickFormatter={(_value, index) => {
-								// グループ（月または四半期）の最初のデータポイントでのみラベルを表示
+							tickFormatter={(value, index) => {
+								// デバッグ: valueとindexの関係を確認
 								const currentPoint = chartData[index];
+								console.log(`[XAxis] index=${index}, value=${value}, chartData[index].date=${currentPoint?.date}, match=${currentPoint?.date === value}`);
+								if (currentPoint?.date !== value) {
+									console.warn(`[XAxis] MISMATCH! index ${index} の date (${currentPoint?.date}) と value (${value}) が一致しない`);
+								}
+
+								// グループ（月または四半期）の最初のデータポイントでのみラベルを表示
 								if (!currentPoint) return "";
 								const prevPoint = index > 0 ? chartData[index - 1] : null;
 								// 前のポイントとグループが異なる場合のみラベルを表示

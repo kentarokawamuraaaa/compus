@@ -509,7 +509,7 @@ export default function Home() {
 			const result = await fetchYahooData({
 				symbols: allSymbols,
 				period,
-				interval: "1wk",
+				interval: "1d",
 			});
 
 			if (result.success && result.data) {
